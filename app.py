@@ -1,8 +1,15 @@
 from flask import Flask, render_template, request, redirect, flash
+from flask_sqlalchemy import SQLAlchemy
 
 app = Flask(__name__)
 app.secret_key = "mysecretkey"
 app.config['SQLACHEMY_DATABASE_URL'] = 'postgresql://samlion:333693@localhost/flaskdb'
+db = SQLAlchemy(app)
+
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(50), nullable=False, unique=True)
+    
 
 @app.route('/')
 def home():
@@ -26,6 +33,7 @@ def register():
         return redirect('/')
     
     return render_template('register.html')
+
 
 if __name__ == '__main__':
     app.run(debug=True)
