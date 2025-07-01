@@ -1,6 +1,7 @@
 from flask import Flask, render_template, request, redirect, flash, session, url_for
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
+from datetime import datetime
 
 app = Flask(__name__)
 app.secret_key = "mysecretkey"
@@ -12,7 +13,15 @@ class User(db.Model):
     username = db.Column(db.String(50), nullable=False, unique=True)
     email = db.Column(db.String(120), nullable=False, unique=True)
     password = db.Column(db.String(256), nullable=False)
+    last_active = db.Column(db.DateTime, default=datetime.utcnow)
     
+@app.before_request
+def update_last_seen():
+    if 'user_id' in session:
+        user = User.query.get(session['user_id'])
+        if user:
+            user.last_seen = datetime.utcnow()
+            db.session.commit()
 
 @app.route('/')
 def home():
@@ -78,6 +87,16 @@ def world():
 
 with app.app_context():
     db.create_all()
+
+@app.route('/update_activity', methods=['POST'])
+def update_activity():
+    user_id = session.get('user_id')
+    if user_id:
+        user = User.query.get(user_id)
+        if user:
+            user.last_active = datetime.utcnow()
+            db.session.commit()
+    return '', 204
 
 if __name__ == '__main__':
     app.run(debug=True)

@@ -7,5 +7,14 @@
     <h1>Добро пожаловать в наш мир!</h1>
     <p>Здесь ты можешь видеть действия.</p>
     <a href="{{ url_for('profile') }}">← Назад в профиль</a>
+    <script>
+        function pingServer() {
+            fetch('/update_activity', {
+                method: 'POST'
+            });
+        }
+
+        setInterval(pingServer, 5000); // отправлять пинг каждые 5 секунд
+    </script>
 </body>
 </html>
