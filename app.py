@@ -66,6 +66,16 @@ def profile():
     user = User.query.get(user_id)
     return render_template('profile.html', user=user)
 
+@app.route('/world')
+def world():
+    user_id = session.get('user_id')
+    if not user_id:
+        flash('Пожалуйста, войдите в систему')
+        return redirect(url_for('login'))
+    
+    return render_template('world.html')
+    
+
 with app.app_context():
     db.create_all()
 
