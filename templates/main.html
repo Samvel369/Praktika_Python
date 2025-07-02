@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Главная{% endblock %}
+
+{% block content %}
+<h2>Добро пожаловать!</h2>
+<p>Вот самые популярные действия сегодня:</p>
+<ul>
+    {% for action in top_actions %}
+        <li>{{ action }}</li>
+    {% endfor %}
+</ul>
+{% endblock %}

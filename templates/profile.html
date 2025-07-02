@@ -1,22 +1,38 @@
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <title>Профиль</title>
-</head>
-<body>
-    <h2>Профиль пользователя</h2>
-    <p><strong>Имя пользователя:</strong> {{ user.username }}</p>
-    <p><strong>Email:</strong> {{ user.email }}</p>
-    <a href="{{ url_for('world') }}"><button>Войти в мир</button></a>
-    <script>
-        function pingServer() {
-            fetch('/update_activity', {
-                method: 'POST'
-            });
-        }
+{% extends "base.html" %}
+{% block title %}Профиль{% endblock %}
 
-    setInterval(pingServer, 5000); // отправлять пинг каждые 5 секунд
-</script>
-</body>
-</html>
+{% block content %}
+<h2>Профиль</h2>
+<p><a href="{{ url_for('edit_profile') }}">Редактировать профиль</a></p>
+
+<div style="display: flex; align-items: center; gap: 20px;">
+    <img src="{{ user.avatar_url or url_for('static', filename='default-avatar.png') }}" width="120" height="120" style="border-radius: 50%;">
+
+    <div>
+        <p><strong>Имя:</strong> {{ user.username }}</p>
+        <p><strong>Email:</strong> {{ user.email }}</p>
+        {% if user.birthdate %}
+        <p><strong>Дата рождения:</strong> {{ user.birthdate.strftime('%d.%m.%Y') }}</p>
+        {% endif %}
+        <p><strong>Статус:</strong> {{ user.status }}</p>
+    </div>
+</div>
+
+<div style="margin-top: 20px;">
+    <p><strong>О себе:</strong></p>
+    <div style="background: #f9f9f9; padding: 10px; border-radius: 5px;">
+        {{ user.about }}
+    </div>
+</div>
+
+<hr>
+
+<h3>Вкладки</h3>
+<ul>
+    <li><a href="#">Друзья</a> (в разработке)</li>
+    <li><a href="#">Мои действия</a> (в разработке)</li>
+    <li><a href="#">Статистика</a> (в разработке)</li>
+</ul>
+
+{% endblock %}
+

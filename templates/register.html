@@ -1,35 +1,22 @@
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <title>Регистрация</title>
-</head>
-<body>
-    {% with messages = get_flashed_messages() %}
-      {% if messages %}
-        <ul>
-          {% for message in messages %}
-            <li style="color: red;">{{ message }}</li>
-          {% endfor %}
-        </ul>
-      {% endif %}
-    {% endwith %}
+{% extends 'base.html' %}
 
-    <h1>Регистрация</h1>
-    <form method="post">
-        <label>Имя:</label><br>
-        <input type="text" name="username" required><br><br>
+{% block title %}Регистрация{% endblock %}
 
-        <label>Пароль:</label><br>
-        <input type="password" name="password" required><br><br>
+{% block content %}
+<h2>Регистрация</h2>
+<form method="POST">
+    <label>Имя пользователя:</label><br>
+    <input type="text" name="username" required><br><br>
+    
+    <label>Пароль:</label><br>
+    <input type="password" name="password" required><br><br>
+    
+    <label>Подтвердите пароль:</label><br>
+    <input type="password" name="confirm_password" required><br><br>
 
-        <label>Пароль:</label><br>
-        <input type="password" name="confirm_password" required><br><br>
-
-        <label>email:</label><br>
-        <input type="email" name="email" required><br><br>
-
-        <input type="submit" value="Зарегистрироваться">
-    </form>
-</body>
-</html>
+    <label>Email:</label><br>
+    <input type="email" name="email" required><br><br>
+    
+    <input type="submit" value="Зарегистрироваться">
+</form>
+{% endblock %}

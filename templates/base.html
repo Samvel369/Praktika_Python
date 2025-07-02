@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>{% block title %}Соцсеть{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div class="container">
+    <div class="sidebar">
+        <h3>Меню</h3>
+        <ul>
+            {% if 'user_id' in session %}
+                {% if request.path != '/main' %}
+                    <li><a href="{{ url_for('main') }}">Главная</a></li>
+                {% endif %}
+                {% if request.path != '/profile' %}
+                    <li><a href="{{ url_for('profile') }}">Профиль</a></li>
+                {% endif %}
+                {% if request.path != '/world' %}
+                    <li><a href="{{ url_for('world') }}">Наш мир</a></li>
+                {% endif %}
+                    <li><a href="{{ url_for('logout') }}">Выход</a></li>
+            {% else %}
+                <li><a href="{{ url_for('login') }}">Главная</a></li>
+                <li><a href="{{ url_for('login') }}">Вход</a></li>
+                <li><a href="{{ url_for('register') }}">Регистрация</a></li>
+            {% endif %}
+        </ul>
+    </div>
+
+    <div class="content">
+        {% block content %}{% endblock %}
+    </div>
+
+    <div class="sidebar-right">
+        <p><strong>Нас уже:</strong> {{ total_users }}</p>
+        <p><strong>Онлайн:</strong> {{ online_users }}</p>
+    </div>
+</div>
+</body>
+</html>

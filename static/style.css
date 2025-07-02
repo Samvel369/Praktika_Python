@@ -1,0 +1,57 @@
+body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    padding: 0;
+}
+
+.container {
+    display: flex;
+    min-height: 100vh;
+}
+
+.sidebar, .sidebar-right {
+    width: 200px;
+    padding: 20px;
+    background-color: #f2f2f2;
+}
+
+.sidebar-right {
+    background-color: #e0f7fa;
+    font-size: 14px;
+}
+
+.content {
+    flex: 1;
+    padding: 20px;
+    background-color: #fff;
+}
+
+.sidebar ul {
+    list-style: none;
+    padding: 0;
+}
+
+.sidebar li {
+    margin: 10px 0;
+}
+
+.sidebar a {
+    text-decoration: none;
+    color: #3b3bff;
+}
+
+h2 {
+    margin-top: 0;
+}
+
+.world-actions .action-column {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.world-actions button {
+    padding: 10px;
+    font-size: 16px;
+    cursor: pointer;
+}

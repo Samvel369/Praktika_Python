@@ -1,20 +1,15 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Наш Мир</title>
-</head>
-<body>
-    <h1>Добро пожаловать в наш мир!</h1>
-    <p>Здесь ты можешь видеть действия.</p>
-    <a href="{{ url_for('profile') }}">← Назад в профиль</a>
-    <script>
-        function pingServer() {
-            fetch('/update_activity', {
-                method: 'POST'
-            });
-        }
+{% extends "base.html" %}
+{% block title %}Мир действий{% endblock %}
 
-        setInterval(pingServer, 5000); // отправлять пинг каждые 5 секунд
-    </script>
-</body>
-</html>
+{% block content %}
+<h2>Добро пожаловать в мир действий!</h2>
+
+<div class="world-actions">
+    <div class="action-column">
+        <button>Играю на гитаре</button>
+        <button>Работаю</button>
+        <button>Обедаю</button>
+        <button>Отдыхаю</button>
+    </div>
+</div>
+{% endblock %}

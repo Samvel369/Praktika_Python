@@ -1,30 +1,16 @@
-<!DOCTYPE>
-<html>
-<head>
-    <title>Вход</title>
-</head>
-<body>
-    <h2>Вход</h2>
-    <form method="POST">
-        <label>Имя пользователя:</label><br>
-        <input type="text" name="username" required><br><br>
+{% extends 'base.html' %}
 
-        <label>Пароль:</label><br>
-        <input type="password" name="password" required><br><br>
+{% block title %}Вход{% endblock %}
 
-        <button type="submit">Войти</button>
-    </form>
+{% block content %}
+<h2>Вход</h2>
+<form method="POST">
+    <label>Имя пользователя:</label><br>
+    <input type="text" name="username" required><br><br>
 
-    {% with messeges = get_flashed_messages() %}
-        {% if messages %}
-            <ul style="color: red;">
-                {% for message in messages %}
-                    <li>{{ message }}<li>
-                {% endfor %}
-            </ul>
-        {% endif %}
-    {% endwith %}
+    <label>Пароль:</label><br>
+    <input type="password" name="password" required><br><br>
 
-    <p>Нет акаунта? <a href="{{ url_for('register') }}">Зарегистрироваться</a></p>
-    </body>
-</html>
+    <input type="submit" value="Войти">
+</form>
+{% endblock %}
