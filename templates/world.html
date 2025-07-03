@@ -1,15 +1,127 @@
 {% extends "base.html" %}
-{% block title %}Мир действий{% endblock %}
+{% block title %}Наш мир{% endblock %}
 
 {% block content %}
-<h2>Добро пожаловать в мир действий!</h2>
+<h2>Наш мир действий</h2>
 
-<div class="world-actions">
-    <div class="action-column">
-        <button>Играю на гитаре</button>
-        <button>Работаю</button>
-        <button>Обедаю</button>
-        <button>Отдыхаю</button>
+<div class="world-columns">
+
+    <!-- 1. Ежедневные действия -->
+    <div class="column">
+        <h3>Ежедневные</h3>
+
+        {% if daily_actions %}
+            <ul>
+                {% for action in daily_actions %}
+                    <li>
+                        {{ action.text }} —
+                        <span id="counter-{{ action.id }}">0</span> чел.
+                        <button onclick="markAction({{ action.id }})">Отметиться</button>
+                        <div id="message-{{ action.id }}" style="color: red;"></div>
+                        <span id="cooldown-{{ action.id }}" style="color:red; display:none;"></span>
+                    </li>
+                {% endfor %}
+            </ul>
+        {% else %}
+            <p>Нет ежедневных действий</p>
+        {% endif %}
+    </div>
+
+    <!-- 2. Мои действия (все опубликованные, видны всем) -->
+    <div class="column">
+        <h3>Мои действия</h3>
+
+        {% if published %}
+            <ul>
+                {% for published in published %}
+                    <li>
+                        {{ published.text }} —
+                        <span id="counter-{{ published.id }}">0</span> чел.
+                        <button onclick="markAction({{ published.id }})">Отметиться</button>
+                        <div id="message-{{ published.id }}" style="color: red;"></div>
+                        <span id="cooldown-{{ published.id }}" style="color:red; display:none;"></span>
+                    </li>
+                {% endfor %}
+            </ul>
+        {% else %}
+            <p>Нет опубликованных действий</p>
+        {% endif %}
+    </div>
+
+    <!-- 3. Создать действие -->
+    <div class="column">
+        <h3>Создать действие</h3>
+
+        <form method="post">
+            <input type="text" name="draft_action" placeholder="Введите действие">
+            <button type="submit">Создать</button>
+        </form>
+
+       {% if my_created %}
+            <h4>Созданные действия</h4>
+            {% for action in my_created %}
+                <div class="draft-action">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <p style="margin: 0;">
+                            {{ action.text }}
+                        </p>
+                        <form method="post" action="{{ url_for('delete_action', action_id=action.id) }}">
+                            <button type="submit" onclick="return confirm('Удалить?')">❌</button>
+                        </form>
+                    </div>
+                    <form method="post" action="{{ url_for('publish_action', action_id=action.id) }}">
+                        <button type="submit" style="margin-top: 5px;">Опубликовать</button>
+                    </form>
+                </div>
+            {% endfor %}
+        {% endif %}
     </div>
 </div>
+
+<script>
+function markAction(actionId) {
+    fetch('/mark_action/' + actionId, {method: 'POST'})
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                updateCounters();  // сразу обновляем счётчик
+            } else if (data.error === 'wait') {
+                showCooldown(actionId, data.remaining);
+            }
+        });
+}
+
+function showCooldown(actionId, seconds) {
+    const span = document.querySelector(`#cooldown-${actionId}`);
+    if (!span) return;
+    span.style.display = 'inline';
+    let remaining = seconds;
+
+    const interval = setInterval(() => {
+        span.innerText = `Подождите ${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, '0')}`;
+        remaining--;
+        if (remaining <= 0) {
+            clearInterval(interval);
+            span.innerText = '';
+            span.style.display = 'none';
+        }
+    }, 1000);
+}
+
+function updateCounters() {
+    fetch('/get_mark_counts')
+        .then(res => res.json())
+        .then(counts => {
+            for (const [actionId, count] of Object.entries(counts)) {
+                const el = document.getElementById('counter-' + actionId);
+                if (el) el.innerText = count;
+            }
+        });
+}
+updateCounters();
+// обновляем каждые 10 секунд
+setInterval(updateCounters, 1000);
+</script>
+
+
 {% endblock %}

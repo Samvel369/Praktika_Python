@@ -20,7 +20,7 @@
                 {% if request.path != '/world' %}
                     <li><a href="{{ url_for('world') }}">Наш мир</a></li>
                 {% endif %}
-                    <li><a href="{{ url_for('logout') }}">Выход</a></li>
+                <li><a href="{{ url_for('logout') }}">Выход</a></li>
             {% else %}
                 <li><a href="{{ url_for('login') }}">Главная</a></li>
                 <li><a href="{{ url_for('login') }}">Вход</a></li>
@@ -38,5 +38,11 @@
         <p><strong>Онлайн:</strong> {{ online_users }}</p>
     </div>
 </div>
+
+<script>
+    setInterval(() => {
+        fetch('/update_activity', {method: 'POST'});
+    }, 10000);
+</script>
 </body>
 </html>
