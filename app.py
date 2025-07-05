@@ -180,15 +180,17 @@ def world():
 
         return redirect(url_for('world'))
 
-    daily_actions = Action.query.filter_by(is_daily=True).all()
-    my_created = Action.query.filter_by(user_id=user.id).order_by(Action.created_at.desc()).all()
-    published = Action.query.filter_by(is_published=True).all()  # <- ВАЖНО
+    daily_actions = Action.query.filter_by(is_daily=True).all()  # список всех ежедневных действий
+    my_created = Action.query.filter_by(user_id=user.id, is_published=False).all()  # список черновиков
+    published = Action.query.filter_by(is_published=True).all()  # список опубликованных
 
     return render_template('world.html',
-        daily_actions=daily_actions,
-        my_created=my_created,
-        published=published
+        daily_actions=daily_actions,  # передаем список ежедневных действий
+        my_created=my_created,  # передаем список черновиков
+        published=published  # передаем список опубликованных действий
     )
+
+
 
 @app.route('/edit_action/<int:action_id>', methods=['POST'])
 def edit_action(action_id):
@@ -220,15 +222,19 @@ def delete_action(action_id):
 def publish_action(action_id):
     user_id = session.get('user_id')
     user = User.query.get(user_id)
-    if not user_id:
-        return redirect(url_for('login'))
+    if not user:
+        return jsonify({'error': 'Unauthorized'}), 401
 
     action = Action.query.get(action_id)
-    if action and user and action.user_id == user.id:
+    if action and action.user_id == user.id:
         action.is_published = True
         db.session.commit()
-
-    return redirect(url_for('world'))
+        return jsonify({
+            'success': True,
+            'id': action.id,
+            'text': action.text
+        })
+    return jsonify({'error': 'Not allowed'}), 403
 
 @app.route('/update_activity', methods=['POST'])
 def update_activity():
@@ -240,6 +246,18 @@ def update_activity():
             db.session.commit()
             print(f"✅ Активность обновлена для: {user.username}")
     return '', 204
+
+@app.route('/get_published_actions')
+def get_published_actions():
+    actions = Action.query.filter_by(is_published=True).order_by(Action.created_at.desc()).all()
+    result = []
+    for action in actions:
+        result.append({
+            'id': action.id,
+            'text': action.text
+        })
+    return jsonify(result)
+
 
 @app.context_processor
 def inject_user_counts():

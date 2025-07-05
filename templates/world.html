@@ -30,22 +30,16 @@
     <!-- 2. Мои действия (все опубликованные, видны всем) -->
     <div class="column">
         <h3>Мои действия</h3>
-
-        {% if published %}
-            <ul>
-                {% for published in published %}
-                    <li>
-                        {{ published.text }} —
-                        <span id="counter-{{ published.id }}">0</span> чел.
-                        <button onclick="markAction({{ published.id }})">Отметиться</button>
-                        <div id="message-{{ published.id }}" style="color: red;"></div>
-                        <span id="cooldown-{{ published.id }}" style="color:red; display:none;"></span>
-                    </li>
-                {% endfor %}
-            </ul>
-        {% else %}
-            <p>Нет опубликованных действий</p>
-        {% endif %}
+        <ul id="published-actions">
+            {% for action in published %}
+                <li data-id="{{ action.id }}">
+                    {{ action.text }} — <span id="counter-{{ action.id }}">0</span> чел.
+                    <button onclick="markAction({{ action.id }})">Отметиться</button>
+                    <div id="message-{{ action.id }}" style="color: red;"></div>
+                    <span id="cooldown-{{ action.id }}" style="color:red; display:none;"></span>
+                </li>
+            {% endfor %}
+        </ul>
     </div>
 
     <!-- 3. Создать действие -->
@@ -57,7 +51,7 @@
             <button type="submit">Создать</button>
         </form>
 
-       {% if my_created %}
+        {% if my_created %}
             <h4>Созданные действия</h4>
             {% for action in my_created %}
                 <div class="draft-action">
@@ -69,9 +63,7 @@
                             <button type="submit" onclick="return confirm('Удалить?')">❌</button>
                         </form>
                     </div>
-                    <form method="post" action="{{ url_for('publish_action', action_id=action.id) }}">
-                        <button type="submit" style="margin-top: 5px;">Опубликовать</button>
-                    </form>
+                    <button onclick="publishAction({{ action.id }}, '{{ action.text }}')" style="margin-top: 5px;">Опубликовать</button>
                 </div>
             {% endfor %}
         {% endif %}
@@ -84,7 +76,7 @@ function markAction(actionId) {
         .then(res => res.json())
         .then(data => {
             if (data.success) {
-                updateCounters();  // сразу обновляем счётчик
+                updateCounters();
             } else if (data.error === 'wait') {
                 showCooldown(actionId, data.remaining);
             }
@@ -118,10 +110,53 @@ function updateCounters() {
             }
         });
 }
+
 updateCounters();
-// обновляем каждые 10 секунд
 setInterval(updateCounters, 1000);
 </script>
 
+<script>
+function publishAction(actionId, text) {
+    fetch(`/publish_action/${actionId}`, { method: 'POST' })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                const publishedList = document.getElementById('published-actions');
+                const existingIds = Array.from(publishedList.children).map(li => li.getAttribute('data-id'));
+                if (!existingIds.includes(String(data.id))) {
+                    const li = document.createElement('li');
+                    li.setAttribute('data-id', data.id);
+                    li.innerHTML = `${data.text} — <span id="counter-${data.id}">0</span> чел. <button onclick="markAction(${data.id})">Отметиться</button>`;
+                    publishedList.prepend(li);
+                }
+            }
+        });
+}
+</script>
 
-{% endblock %}
+<script>
+function fetchPublishedActions() {
+    fetch('/get_published_actions')
+        .then(res => res.json())
+        .then(actions => {
+            const container = document.getElementById('published-actions');
+            const existingIds = new Set(
+                Array.from(container.children).map(li => li.getAttribute('data-id'))
+            );
+
+            actions.forEach(action => {
+                if (!existingIds.has(String(action.id))) {
+                    const li = document.createElement('li');
+                    li.setAttribute('data-id', action.id);
+                    li.innerHTML = `${action.text} — <span id="counter-${action.id}">0</span> чел. <button onclick="markAction(${action.id})">Отметиться</button>`;
+                    container.prepend(li);
+                }
+            });
+        });
+}
+
+setInterval(fetchPublishedActions, 1000);
+</script>
+
+
+{% endblock %} 
