@@ -1,0 +1,45 @@
+{% extends 'base.html' %}
+{% block title %}Карточка действия{% endblock %}
+
+{% block content %}
+<h2>Карточка действия</h2>
+<p><strong>Действие:</strong> {{ action.text }}</p>
+<p><strong>Всего отметок:</strong> <span id="total-marks">{{ total_marks }}</span></p>
+<p><strong>Уникальных пользователей:</strong> <span id="user-count">{{ users|length }}</span></p>
+<p><strong>Пик активности:</strong> <span id="peak">{{ peak }}</span> отметок за 1 минуту</p>
+
+<h4>Пользователи:</h4>
+<ul id="user-list">
+    {% for user in users %}
+        <li>{{ user.username }}</li>
+    {% endfor %}
+</ul>
+
+<a href="{{ url_for('world') }}">← Назад</a>
+
+<script>
+const actionId = {{ action.id }};
+
+function updateStats() {
+    fetch(`/action_stats/${actionId}`)
+        .then(res => res.json())
+        .then(data => {
+            document.getElementById('total-marks').innerText = data.total_marks;
+            document.getElementById('user-count').innerText = data.users.length;
+            document.getElementById('peak').innerText = data.peak;
+
+            const userList = document.getElementById('user-list');
+            userList.innerHTML = '';
+
+            data.users.forEach(username => {
+                const li = document.createElement('li');
+                li.textContent = username;
+                userList.appendChild(li);
+            });
+        });
+}
+
+updateStats();
+setInterval(updateStats, 1000);
+</script>
+{% endblock %}

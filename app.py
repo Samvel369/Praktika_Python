@@ -30,6 +30,8 @@ class Action(db.Model):
     is_published = db.Column(db.Boolean, default=False)
     is_daily = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    expires_at = db.Column(db.DateTime, nullable=True)
+
 
     user = db.relationship('User', backref='actions')
     
@@ -41,6 +43,12 @@ class ActionMark(db.Model):
 
     user = db.relationship('User', backref='marks')
     action = db.relationship('Action', backref='marks')
+
+class Mark(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    action_id = db.Column(db.Integer, db.ForeignKey('action.id'))
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
 @app.before_request
 def update_last_seen():
@@ -160,7 +168,7 @@ def world():
     if not user_id:
         flash('Пожалуйста, войдите в систему')
         return redirect(url_for('login'))
-    
+
     user = User.query.get(user_id)
 
     if request.method == 'POST':
@@ -180,14 +188,18 @@ def world():
 
         return redirect(url_for('world'))
 
-    daily_actions = Action.query.filter_by(is_daily=True).all()  # список всех ежедневных действий
-    my_created = Action.query.filter_by(user_id=user.id, is_published=False).all()  # список черновиков
-    published = Action.query.filter_by(is_published=True).all()  # список опубликованных
+    now = datetime.utcnow()
+    daily_actions = Action.query.filter_by(is_daily=True).all()
+    my_created = Action.query.filter_by(user_id=user.id, is_published=False).all()
+    published = Action.query.filter(
+        Action.is_published == True,
+        Action.expires_at > now
+    ).order_by(Action.created_at.desc()).all()
 
     return render_template('world.html',
-        daily_actions=daily_actions,  # передаем список ежедневных действий
-        my_created=my_created,  # передаем список черновиков
-        published=published  # передаем список опубликованных действий
+        daily_actions=daily_actions,
+        my_created=my_created,
+        published=published
     )
 
 
@@ -226,15 +238,30 @@ def publish_action(action_id):
         return jsonify({'error': 'Unauthorized'}), 401
 
     action = Action.query.get(action_id)
-    if action and action.user_id == user.id:
-        action.is_published = True
-        db.session.commit()
-        return jsonify({
-            'success': True,
-            'id': action.id,
-            'text': action.text
-        })
-    return jsonify({'error': 'Not allowed'}), 403
+    if not action or action.user_id != user.id:
+        return jsonify({'error': 'Not allowed'}), 403
+
+    # Проверка на дубликаты (по смыслу)
+    recent_actions = Action.query.filter(
+        Action.user_id == user.id,
+        Action.is_published == True,
+        Action.text.ilike(f"%{action.text}%")
+    ).all()
+
+    now = datetime.utcnow()
+    for a in recent_actions:
+        if a.expires_at and a.expires_at > now:
+            return jsonify({'error': 'Похожее действие уже опубликовано'}), 400
+
+    # Обновляем
+    data = request.get_json()
+    duration_minutes = int(data.get('duration', 10))
+    action.is_published = True
+    action.expires_at = now + timedelta(minutes=duration_minutes)
+
+    db.session.commit()
+    return jsonify({'success': True, 'id': action.id, 'text': action.text})
+
 
 @app.route('/update_activity', methods=['POST'])
 def update_activity():
@@ -249,7 +276,12 @@ def update_activity():
 
 @app.route('/get_published_actions')
 def get_published_actions():
-    actions = Action.query.filter_by(is_published=True).order_by(Action.created_at.desc()).all()
+    now = datetime.utcnow()
+    actions = Action.query.filter(
+        Action.is_published == True,
+        Action.expires_at > now
+    ).order_by(Action.created_at.desc()).all()
+
     result = []
     for action in actions:
         result.append({
@@ -299,6 +331,53 @@ def get_mark_counts():
         counts[mark.action_id] = counts.get(mark.action_id, 0) + 1
 
     return jsonify(counts)
+
+@app.route('/action/<int:action_id>')
+def action_card(action_id):
+    action = Action.query.get_or_404(action_id)
+
+    # Все отметки по этому действию
+    marks = Mark.query.filter_by(action_id=action.id).order_by(Mark.timestamp.asc()).all()
+
+    # Список уникальных пользователей
+    user_ids = list({mark.user_id for mark in marks})
+    users = User.query.filter(User.id.in_(user_ids)).all()
+
+    # Пик активности (макс отметок за 1 минуту)
+    from collections import defaultdict
+    minute_counts = defaultdict(int)
+    for mark in marks:
+        minute_key = mark.timestamp.replace(second=0, microsecond=0)
+        minute_counts[minute_key] += 1
+    peak = max(minute_counts.values(), default=0)
+
+    return render_template('action_card.html',
+                           action=action,
+                           total_marks=len(marks),
+                           users=users,
+                           peak=peak)
+
+@app.route('/action_stats/<int:action_id>')
+def action_stats(action_id):
+    now = datetime.utcnow()
+    one_minute_ago = now - timedelta(minutes=1)
+
+    all_marks = ActionMark.query.filter_by(action_id=action_id).all()
+    recent_marks = ActionMark.query.filter(
+        ActionMark.action_id == action_id,
+        ActionMark.timestamp >= one_minute_ago
+    ).all()
+
+    total_marks = len(all_marks)
+    peak = len(recent_marks)
+    user_ids = set(mark.user_id for mark in all_marks)
+    users = User.query.filter(User.id.in_(user_ids)).all()
+
+    return jsonify({
+        'total_marks': total_marks,
+        'peak': peak,
+        'users': [user.username for user in users]
+    })
 
 
 
