@@ -372,6 +372,47 @@ def action_stats(action_id):
         'peak': peak,
         'users': [user.username for user in users]
     })
+    
+@app.route('/my_actions', methods=['GET', 'POST'])
+def my_actions():
+    user_id = session.get('user_id')
+    if not user_id:
+        flash('Пожалуйста, войдите в систему')
+        return redirect(url_for('login'))
+
+    user = User.query.get(user_id)
+
+    if request.method == 'POST':
+        if 'new_action' in request.form:
+            text = request.form.get('new_action')
+            if text:
+                action = Action(user_id=user.id, text=text, is_published=False)
+                db.session.add(action)
+                db.session.commit()
+                flash('Новое действие добавлено!')
+
+        elif 'delete_id' in request.form:
+            action = Action.query.get(int(request.form.get('delete_id')))
+            if action and action.user_id == user.id:
+                db.session.delete(action)
+                db.session.commit()
+                flash('Действие удалено!')
+
+        elif 'publish_id' in request.form:
+            action = Action.query.get(int(request.form.get('publish_id')))
+            if action and action.user_id == user.id:
+                action.is_published = True
+                action.expires_at = datetime.utcnow() + timedelta(minutes=10)
+                db.session.commit()
+                flash('Действие опубликовано! Перейдите в "Наш мир" для просмотра.', 'info')
+
+        return redirect(url_for('my_actions'))
+
+    drafts = Action.query.filter_by(user_id=user.id, is_published=False).all()
+    published = Action.query.filter_by(user_id=user.id, is_published=True).all()
+
+    return render_template('my_actions.html', drafts=drafts, published=published)
+
 
 with app.app_context():
     db.create_all()

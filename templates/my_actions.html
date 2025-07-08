@@ -1,0 +1,50 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<h2>Мои действия</h2>
+
+<!-- Форма добавления нового действия -->
+<h3>Добавить новое действие</h3>
+<form method="POST">
+    <input type="text" name="new_action" placeholder="Введите текст действия" required>
+    <button type="submit">Создать</button>
+</form>
+
+<!-- Отображение черновиков -->
+<h3>Черновики</h3>
+{% if drafts %}
+    {% for action in drafts %}
+        <div class="draft-action">
+            <p>{{ action.text }}</p>
+            <form method="POST" style="display:inline;">
+                <input type="hidden" name="delete_id" value="{{ action.id }}">
+                <button type="submit">Удалить</button>
+            </form>
+            <form method="POST" style="display:inline;">
+                <input type="hidden" name="publish_id" value="{{ action.id }}">
+                <button type="submit">Опубликовать</button>
+            </form>
+        </div>
+    {% endfor %}
+{% else %}
+    <p>Нет черновиков</p>
+{% endif %}
+
+<!-- Отображение опубликованных действий -->
+<h3>Опубликованные действия</h3>
+{% if published %}
+    {% for action in published %}
+        <div class="column">
+            <p>{{ action.text }}</p>
+            <small>Действует до: {{ action.expires_at.strftime('%Y-%m-%d %H:%M') if action.expires_at else '∞' }}</small>
+            <form method="POST" style="display:inline;">
+                <input type="hidden" name="delete_id" value="{{ action.id }}">
+                <button type="submit">Удалить</button>
+            </form>
+        </div>
+    {% endfor %}
+{% else %}
+    <p>Нет опубликованных действий</p>
+{% endif %}
+
+{% endblock %}
