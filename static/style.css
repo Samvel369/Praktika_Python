@@ -81,3 +81,17 @@ h2 {
     border: 1px dashed #aaa;
     border-radius: 5px;
 }
+
+.flashes {
+    margin-top: 15px;
+    padding: 10px;
+    list-style: none;
+}
+
+.flash {
+    background-color: #e0f7fa;
+    border-left: 5px solid #0097a7;
+    padding: 10px;
+    margin-bottom: 10px;
+    border-radius: 4px;
+}

@@ -394,24 +394,27 @@ def my_actions():
         elif 'delete_id' in request.form:
             action = Action.query.get(int(request.form.get('delete_id')))
             if action and action.user_id == user.id:
+                # Удаляем связанные отметки
+                ActionMark.query.filter_by(action_id=action.id).delete()
                 db.session.delete(action)
                 db.session.commit()
-                flash('Действие удалено!')
+                flash('Действие и все отметки удалены!')
 
         elif 'publish_id' in request.form:
             action = Action.query.get(int(request.form.get('publish_id')))
             if action and action.user_id == user.id:
                 action.is_published = True
-                action.expires_at = datetime.utcnow() + timedelta(minutes=10)
+                duration = int(request.form.get('duration', 10))
+                action.expires_at = datetime.utcnow() + timedelta(minutes=duration)
                 db.session.commit()
                 flash('Действие опубликовано! Перейдите в "Наш мир" для просмотра.', 'info')
 
         return redirect(url_for('my_actions'))
 
-    drafts = Action.query.filter_by(user_id=user.id, is_published=False).all()
-    published = Action.query.filter_by(user_id=user.id, is_published=True).all()
+    drafts = Action.query.filter_by(user_id=user.id, is_published=False).order_by(Action.created_at.desc()).all()
+    published = Action.query.filter_by(user_id=user.id, is_published=True).order_by(Action.created_at.desc()).all()
 
-    return render_template('my_actions.html', drafts=drafts, published=published)
+    return render_template('my_actions.html', drafts=drafts, published=published, now=datetime.utcnow())
 
 
 with app.app_context():

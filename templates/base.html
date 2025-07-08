@@ -11,18 +11,13 @@
         <h3>Меню</h3>
         <ul>
             {% if 'user_id' in session %}
-                {% if request.path != '/main' %}
-                    <li><a href="{{ url_for('main') }}">Главная</a></li>
-                {% endif %}
-                {% if request.path != '/profile' %}
-                    <li><a href="{{ url_for('profile') }}">Профиль</a></li>
-                {% endif %}
-                {% if request.path != '/world' %}
-                    <li><a href="{{ url_for('world') }}">Наш мир</a></li>
-                {% endif %}
+                <li><a href="{{ url_for('main') }}">Главная</a></li>
+                <li><a href="{{ url_for('profile') }}">Профиль</a></li>
+                <li><a href="{{ url_for('my_actions') }}">Мои действия</a></li>
+                <li><a href="{{ url_for('world') }}">Наш мир</a></li>
                 <li><a href="{{ url_for('logout') }}">Выход</a></li>
             {% else %}
-                <li><a href="{{ url_for('login') }}">Главная</a></li>
+                <li><a href="{{ url_for('main') }}">Главная</a></li>
                 <li><a href="{{ url_for('login') }}">Вход</a></li>
                 <li><a href="{{ url_for('register') }}">Регистрация</a></li>
             {% endif %}
