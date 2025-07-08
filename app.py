@@ -44,12 +44,6 @@ class ActionMark(db.Model):
     user = db.relationship('User', backref='marks')
     action = db.relationship('Action', backref='marks')
 
-class Mark(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    action_id = db.Column(db.Integer, db.ForeignKey('action.id'))
-    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
-
 @app.before_request
 def update_last_seen():
     if 'user_id' in session:
@@ -337,7 +331,7 @@ def action_card(action_id):
     action = Action.query.get_or_404(action_id)
 
     # Все отметки по этому действию
-    marks = Mark.query.filter_by(action_id=action.id).order_by(Mark.timestamp.asc()).all()
+    marks = ActionMark.query.filter_by(action_id=action.id).order_by(ActionMark.timestamp.asc()).all()
 
     # Список уникальных пользователей
     user_ids = list({mark.user_id for mark in marks})
