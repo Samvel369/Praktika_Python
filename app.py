@@ -379,38 +379,6 @@ def action_stats(action_id):
         'users': [user.username for user in users]
     })
 
-@app.route('/action_chart_data/<int:action_id>')
-def action_chart_data(action_id):
-    from collections import defaultdict
-    from datetime import datetime, timedelta
-
-    now = datetime.utcnow().replace(second=0, microsecond=0)
-    since = now - timedelta(minutes=60)
-
-    # Отметки по действию за последние 60 минут
-    marks = Mark.query.filter(
-        Mark.action_id == action_id,
-        Mark.timestamp >= since
-    ).all()
-
-    # Считаем количество отметок по минутам (timestamp в секундах от начала эпохи)
-    minute_counts = defaultdict(int)
-    for mark in marks:
-        minute = mark.timestamp.replace(second=0, microsecond=0)
-        minute_counts[minute.isoformat()] += 1
-
-    # Генерируем список всех минут
-    labels = []
-    data = []
-    for i in range(60):
-        minute = since + timedelta(minutes=i)
-        label = minute.isoformat()
-        labels.append(label)
-        data.append(minute_counts.get(label, 0))
-
-    return jsonify({'labels': labels, 'data': data})
-
-
 with app.app_context():
     db.create_all()
 

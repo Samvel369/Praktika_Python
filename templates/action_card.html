@@ -7,8 +7,6 @@
 <p><strong>Всего отметок:</strong> <span id="total-marks">{{ total_marks }}</span></p>
 <p><strong>Уникальных пользователей:</strong> <span id="user-count">{{ users|length }}</span></p>
 <p><strong>Пик активности:</strong> <span id="peak">{{ peak }}</span> отметок за 1 минуту</p>
-<h4>График активности за последние 60 минут</h4>
-<canvas id="activityChart" width="400" height="200"></canvas>
 
 <h4>Пользователи:</h4>
 <ul id="user-list">
@@ -20,7 +18,7 @@
 <a href="{{ url_for('world') }}">← Назад</a>
 
 <script>
-const actionId = {{ action.id }};
+const actionId = {{ action.id }}; // ← однажды объявляем
 
 function updateStats() {
     fetch(`/action_stats/${actionId}`)
@@ -44,56 +42,5 @@ function updateStats() {
 updateStats();
 setInterval(updateStats, 1000);
 </script>
-
-<script>
-let chart;
-
-function updateChart(labels, dataPoints) {
-    const ctx = document.getElementById('activityChart').getContext('2d');
-
-    // Преобразуем ISO-время в локальный формат HH:MM
-    const localLabels = labels.map(label => {
-        const date = new Date(label + 'Z');  // Явно указываем, что это UTC
-        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    });
-
-
-    if (chart) chart.destroy();
-
-    chart = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: localLabels,  // <-- используем localLabels
-            datasets: [{
-                label: 'Отметок в минуту',
-                data: dataPoints,
-                borderWidth: 2
-            }]
-        },
-        options: {
-            scales: {
-                y: {
-                    beginAtZero: true,
-                    stepSize: 1
-                }
-            }
-        }
-    });
-}
-
-function fetchChartData() {
-    fetch(`/action_chart_data/${actionId}`)
-        .then(res => res.json())
-        .then(data => {
-            updateChart(data.labels, data.counts);
-        });
-}
-
-fetchChartData();
-setInterval(fetchChartData, 60000); // обновление графика раз в минуту
-</script>
-
-
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
 {% endblock %}
