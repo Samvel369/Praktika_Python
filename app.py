@@ -5,6 +5,8 @@ from datetime import datetime, timedelta
 import os
 from werkzeug.utils import secure_filename
 from flask import jsonify
+from functools import wraps
+from flask import redirect, url_for, session, flash
 
 app = Flask(__name__)
 app.secret_key = "mysecretkey"
@@ -43,6 +45,15 @@ class ActionMark(db.Model):
 
     user = db.relationship('User', backref='marks')
     action = db.relationship('Action', backref='marks')
+    
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user_id' not in session:
+            flash('Пожалуйста, войдите в систему')
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated_function
 
 @app.before_request
 def update_last_seen():
@@ -65,7 +76,22 @@ def main():
         flash('Пожалуйста, войдите в систему')
         return redirect(url_for('login'))
 
-    top_actions = ['Чихнул', 'Зевнул', 'Смеялся']
+    now = datetime.utcnow()
+
+    # Получаем активные действия и сортируем по количеству отметок за последнюю минуту
+    active_actions = Action.query.filter(Action.is_published == True, Action.expires_at > now).all()
+
+    from collections import Counter
+    one_minute_ago = now - timedelta(minutes=1)
+    marks = ActionMark.query.filter(ActionMark.timestamp >= one_minute_ago).all()
+
+    mark_counts = Counter()
+    for mark in marks:
+        mark_counts[mark.action_id] += 1
+
+    # Сортируем действия по числу отметок
+    top_actions = sorted(active_actions, key=lambda a: mark_counts.get(a.id, 0), reverse=True)[:10]
+
     return render_template('main.html', top_actions=top_actions)
 
 @app.route('/register', methods=['GET', 'POST'])
@@ -107,6 +133,7 @@ def login():
     return render_template('login.html')
 
 @app.route('/profile')
+@login_required
 def profile():
     user_id = session.get('user_id')
     if not user_id:
@@ -157,6 +184,7 @@ def logout():
     return redirect(url_for('login'))
 
 @app.route('/world', methods=['GET', 'POST'])
+@login_required
 def world():
     user_id = session.get('user_id')
     if not user_id:
@@ -374,6 +402,7 @@ def action_stats(action_id):
     })
     
 @app.route('/my_actions', methods=['GET', 'POST'])
+@login_required
 def my_actions():
     user_id = session.get('user_id')
     if not user_id:
@@ -416,6 +445,29 @@ def my_actions():
 
     return render_template('my_actions.html', drafts=drafts, published=published, now=datetime.utcnow())
 
+@app.route('/get_top_actions')
+def get_top_actions():
+    now = datetime.utcnow()
+    one_minute_ago = now - timedelta(minutes=1)
+
+    active_actions = Action.query.filter(
+        Action.is_published == True,
+        Action.expires_at > now
+    ).all()
+
+    marks = ActionMark.query.filter(ActionMark.timestamp >= one_minute_ago).all()
+    from collections import Counter
+    mark_counts = Counter(mark.action_id for mark in marks)
+
+    top_actions = sorted(active_actions, key=lambda a: mark_counts.get(a.id, 0), reverse=True)[:10]
+
+    return jsonify([
+        {
+            'id': a.id,
+            'text': a.text,
+            'marks': mark_counts.get(a.id, 0)
+        } for a in top_actions
+    ])
 
 with app.app_context():
     db.create_all()
