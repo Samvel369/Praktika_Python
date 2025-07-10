@@ -1,29 +1,36 @@
-from flask import Flask, render_template, request, redirect, flash, session, url_for
+from flask import Flask, render_template, request, redirect, flash, url_for, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta
 import os
 from werkzeug.utils import secure_filename
-from flask import jsonify
-from functools import wraps
-from flask import redirect, url_for, session, flash
+from flask_login import LoginManager, login_user, logout_user, current_user, login_required, UserMixin
 
 app = Flask(__name__)
 app.secret_key = "mysecretkey"
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('SQLALCHEMY_DATABASE_URI')
 db = SQLAlchemy(app)
 
-class User(db.Model):
+login_manager = LoginManager()
+login_manager.login_view = 'login'
+login_manager.init_app(app)
+
+@login_manager.user_loader
+def load_user(user_id):
+    return User.query.get(int(user_id))
+
+
+class User(db.Model, UserMixin):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(50), nullable=False, unique=True)
     email = db.Column(db.String(120), nullable=False, unique=True)
     password = db.Column(db.String(256), nullable=False)
     last_active = db.Column(db.DateTime, default=datetime.utcnow)
-
     avatar_url = db.Column(db.String(300), default="/static/default-avatar.png")
     birthdate = db.Column(db.Date)
     status = db.Column(db.String(100), default="Приветствую всех!")
     about = db.Column(db.Text, default="Пока ничего о себе не рассказал.")
+
 
 class Action(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -34,9 +41,9 @@ class Action(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     expires_at = db.Column(db.DateTime, nullable=True)
 
-
     user = db.relationship('User', backref='actions')
-    
+
+
 class ActionMark(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
@@ -45,40 +52,36 @@ class ActionMark(db.Model):
 
     user = db.relationship('User', backref='marks')
     action = db.relationship('Action', backref='marks')
-    
-def login_required(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if 'user_id' not in session:
-            flash('Пожалуйста, войдите в систему')
-            return redirect(url_for('login'))
-        return f(*args, **kwargs)
-    return decorated_function
+
+class FriendRequest(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    sender_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    receiver_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    status = db.Column(db.String(20), default='pending')  # Добавлено поле
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+
+    sender = db.relationship('User', foreign_keys=[sender_id], backref='sent_requests')
+    receiver = db.relationship('User', foreign_keys=[receiver_id], backref='received_requests')
+
 
 @app.before_request
 def update_last_seen():
-    if 'user_id' in session:
-        user = User.query.get(session['user_id'])
-        if user:
-            user.last_active = datetime.utcnow()
-            db.session.commit()
+    if current_user.is_authenticated:
+        current_user.last_active = datetime.utcnow()
+        db.session.commit()
+
 
 @app.route('/')
 def home():
-    if 'user_id' in session:
+    if current_user.is_authenticated:
         return redirect(url_for('main'))
     return render_template('index.html')
 
+
 @app.route('/main')
+@login_required
 def main():
-    user_id = session.get('user_id')
-    if not user_id:
-        flash('Пожалуйста, войдите в систему')
-        return redirect(url_for('login'))
-
     now = datetime.utcnow()
-
-    # Получаем активные действия и сортируем по количеству отметок за последнюю минуту
     active_actions = Action.query.filter(Action.is_published == True, Action.expires_at > now).all()
 
     from collections import Counter
@@ -89,10 +92,14 @@ def main():
     for mark in marks:
         mark_counts[mark.action_id] += 1
 
-    # Сортируем действия по числу отметок
-    top_actions = sorted(active_actions, key=lambda a: mark_counts.get(a.id, 0), reverse=True)[:10]
+    top_actions = sorted(
+        active_actions,
+        key=lambda a: mark_counts.get(a.id, 0),
+        reverse=True
+    )[:10]
 
     return render_template('main.html', top_actions=top_actions)
+
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
@@ -119,41 +126,40 @@ def register():
         return redirect('/')
     return render_template('register.html')
 
+
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
         username = request.form['username']
         password = request.form.get('password')
         user = User.query.filter_by(username=username).first()
+
         if user and check_password_hash(user.password, password):
-            session['user_id'] = user.id
+            login_user(user)
             return redirect(url_for('main'))
         else:
             return 'Неверный логин или пароль'
     return render_template('login.html')
 
+
+@app.route('/logout')
+@login_required
+def logout():
+    logout_user()
+    flash('Вы вышли из аккаунта')
+    return redirect(url_for('login'))
+
+
 @app.route('/profile')
 @login_required
 def profile():
-    user_id = session.get('user_id')
-    if not user_id:
-        flash('Пожалуйста, войдите в систему')
-        return redirect(url_for('login'))
-    user = User.query.get(user_id)
-    return render_template('profile.html', user=user)
+    return render_template('profile.html', user=current_user)
+
 
 @app.route('/edit_profile', methods=['GET', 'POST'])
+@login_required
 def edit_profile():
-    user_id = session.get('user_id')
-    if not user_id:
-        flash('Пожалуйста, войдите в систему')
-        return redirect(url_for('login'))
-
-    user = User.query.get(user_id)
-    if user is None:
-        flash('Пользователь не найден.')
-        return redirect(url_for('login'))
-
+    user = current_user
     if request.method == 'POST':
         if 'avatar' in request.files:
             avatar = request.files['avatar']
@@ -174,25 +180,36 @@ def edit_profile():
         db.session.commit()
         flash("Профиль обновлён!")
         return redirect(url_for('profile'))
-
     return render_template('edit_profile.html', user=user)
 
-@app.route('/logout')
-def logout():
-    session.pop('user_id', None)
-    flash('Вы вышли из аккаунта')
-    return redirect(url_for('login'))
+@app.route('/profile/<int:user_id>')
+@login_required
+def view_profile(user_id):
+    user = User.query.get_or_404(user_id)
+
+    # Проверка — друзья или нет
+    is_friend = FriendRequest.query.filter_by(
+        sender_id=current_user.id,
+        receiver_id=user.id,
+        status='accepted'
+    ).first() or FriendRequest.query.filter_by(
+        sender_id=user.id,
+        receiver_id=current_user.id,
+        status='accepted'
+    ).first()
+
+    if not is_friend and user.id != current_user.id:
+        flash("Страница будет доступна после подтверждения заявки в друзья.")
+        return render_template('user_preview.html', user=user)
+
+    return render_template('user_profile.html', user=user)
+
+
 
 @app.route('/world', methods=['GET', 'POST'])
 @login_required
 def world():
-    user_id = session.get('user_id')
-    if not user_id:
-        flash('Пожалуйста, войдите в систему')
-        return redirect(url_for('login'))
-
-    user = User.query.get(user_id)
-
+    user = current_user
     if request.method == 'POST':
         if 'daily_action' in request.form:
             text = request.form.get('daily_action')
@@ -200,70 +217,59 @@ def world():
                 action = Action(text=text, is_daily=True, is_published=True)
                 db.session.add(action)
                 db.session.commit()
-
         elif 'draft_action' in request.form:
             text = request.form.get('draft_action')
             if text:
                 action = Action(user_id=user.id, text=text, is_published=False)
                 db.session.add(action)
                 db.session.commit()
-
         return redirect(url_for('world'))
 
     now = datetime.utcnow()
     daily_actions = Action.query.filter_by(is_daily=True).all()
     my_created = Action.query.filter_by(user_id=user.id, is_published=False).all()
-    published = Action.query.filter(
-        Action.is_published == True,
-        Action.expires_at > now
-    ).order_by(Action.created_at.desc()).all()
+    published = Action.query.filter(Action.is_published == True, Action.expires_at > now)\
+        .order_by(Action.created_at.desc()).all()
 
     return render_template('world.html',
         daily_actions=daily_actions,
         my_created=my_created,
-        published=published
-    )
-
+        published=published)
 
 
 @app.route('/edit_action/<int:action_id>', methods=['POST'])
+@login_required
 def edit_action(action_id):
-    user_id = session.get('user_id')
-    user = User.query.get(user_id)
+    user = current_user
     action = Action.query.get(action_id)
-
     new_text = request.form.get('edit_text')
 
-    if action and new_text and user and action.user_id == user.id:
+    if action and new_text and action.user_id == user.id:
         action.text = new_text
         db.session.commit()
-
     return redirect(url_for('world'))
+
 
 @app.route('/delete_action/<int:action_id>', methods=['POST'])
+@login_required
 def delete_action(action_id):
-    user_id = session.get('user_id')
-    user = User.query.get(user_id)
+    user = current_user
     action = Action.query.get(action_id)
 
-    if action and user and action.user_id == user.id:
+    if action and action.user_id == user.id:
         db.session.delete(action)
         db.session.commit()
-
     return redirect(url_for('world'))
 
-@app.route('/publish_action/<int:action_id>', methods=['POST'])
-def publish_action(action_id):
-    user_id = session.get('user_id')
-    user = User.query.get(user_id)
-    if not user:
-        return jsonify({'error': 'Unauthorized'}), 401
 
+@app.route('/publish_action/<int:action_id>', methods=['POST'])
+@login_required
+def publish_action(action_id):
+    user = current_user
     action = Action.query.get(action_id)
     if not action or action.user_id != user.id:
         return jsonify({'error': 'Not allowed'}), 403
 
-    # Проверка на дубликаты (по смыслу)
     recent_actions = Action.query.filter(
         Action.user_id == user.id,
         Action.is_published == True,
@@ -275,42 +281,29 @@ def publish_action(action_id):
         if a.expires_at and a.expires_at > now:
             return jsonify({'error': 'Похожее действие уже опубликовано'}), 400
 
-    # Обновляем
     data = request.get_json()
     duration_minutes = int(data.get('duration', 10))
     action.is_published = True
     action.expires_at = now + timedelta(minutes=duration_minutes)
-
     db.session.commit()
     return jsonify({'success': True, 'id': action.id, 'text': action.text})
 
 
 @app.route('/update_activity', methods=['POST'])
+@login_required
 def update_activity():
-    user_id = session.get('user_id')
-    if user_id:
-        user = User.query.get(user_id)
-        if user:
-            user.last_active = datetime.utcnow()
-            db.session.commit()
-            print(f"✅ Активность обновлена для: {user.username}")
+    current_user.last_active = datetime.utcnow()
+    db.session.commit()
+    print(f"✅ Активность обновлена для: {current_user.username}")
     return '', 204
+
 
 @app.route('/get_published_actions')
 def get_published_actions():
     now = datetime.utcnow()
-    actions = Action.query.filter(
-        Action.is_published == True,
-        Action.expires_at > now
-    ).order_by(Action.created_at.desc()).all()
-
-    result = []
-    for action in actions:
-        result.append({
-            'id': action.id,
-            'text': action.text
-        })
-    return jsonify(result)
+    actions = Action.query.filter(Action.is_published == True, Action.expires_at > now)\
+        .order_by(Action.created_at.desc()).all()
+    return jsonify([{'id': a.id, 'text': a.text} for a in actions])
 
 
 @app.context_processor
@@ -321,12 +314,11 @@ def inject_user_counts():
     total_users = User.query.count()
     return dict(online_users=online_users, total_users=total_users)
 
-@app.route('/mark_action/<int:action_id>', methods=['POST'])
-def mark_action(action_id):
-    user_id = session.get('user_id')
-    if not user_id:
-        return jsonify({'error': 'Unauthorized'}), 401
 
+@app.route('/mark_action/<int:action_id>', methods=['POST'])
+@login_required
+def mark_action(action_id):
+    user_id = current_user.id
     now = datetime.utcnow()
     ten_minutes_ago = now - timedelta(minutes=10)
 
@@ -342,30 +334,27 @@ def mark_action(action_id):
     db.session.commit()
     return jsonify({'success': True})
 
+
 @app.route('/get_mark_counts')
 def get_mark_counts():
     now = datetime.utcnow()
     one_minute_ago = now - timedelta(minutes=1)
-
     recent_marks = ActionMark.query.filter(ActionMark.timestamp >= one_minute_ago).all()
+
     counts = {}
     for mark in recent_marks:
         counts[mark.action_id] = counts.get(mark.action_id, 0) + 1
 
     return jsonify(counts)
 
+
 @app.route('/action/<int:action_id>')
 def action_card(action_id):
     action = Action.query.get_or_404(action_id)
-
-    # Все отметки по этому действию
     marks = ActionMark.query.filter_by(action_id=action.id).order_by(ActionMark.timestamp.asc()).all()
-
-    # Список уникальных пользователей
     user_ids = list({mark.user_id for mark in marks})
     users = User.query.filter(User.id.in_(user_ids)).all()
 
-    # Пик активности (макс отметок за 1 минуту)
     from collections import defaultdict
     minute_counts = defaultdict(int)
     for mark in marks:
@@ -373,11 +362,8 @@ def action_card(action_id):
         minute_counts[minute_key] += 1
     peak = max(minute_counts.values(), default=0)
 
-    return render_template('action_card.html',
-                           action=action,
-                           total_marks=len(marks),
-                           users=users,
-                           peak=peak)
+    return render_template('action_card.html', action=action, total_marks=len(marks), users=users, peak=peak)
+
 
 @app.route('/action_stats/<int:action_id>')
 def action_stats(action_id):
@@ -385,10 +371,7 @@ def action_stats(action_id):
     one_minute_ago = now - timedelta(minutes=1)
 
     all_marks = ActionMark.query.filter_by(action_id=action_id).all()
-    recent_marks = ActionMark.query.filter(
-        ActionMark.action_id == action_id,
-        ActionMark.timestamp >= one_minute_ago
-    ).all()
+    recent_marks = ActionMark.query.filter(ActionMark.action_id == action_id, ActionMark.timestamp >= one_minute_ago).all()
 
     total_marks = len(all_marks)
     peak = len(recent_marks)
@@ -400,16 +383,12 @@ def action_stats(action_id):
         'peak': peak,
         'users': [user.username for user in users]
     })
-    
+
+
 @app.route('/my_actions', methods=['GET', 'POST'])
 @login_required
 def my_actions():
-    user_id = session.get('user_id')
-    if not user_id:
-        flash('Пожалуйста, войдите в систему')
-        return redirect(url_for('login'))
-
-    user = User.query.get(user_id)
+    user = current_user
 
     if request.method == 'POST':
         if 'new_action' in request.form:
@@ -423,7 +402,6 @@ def my_actions():
         elif 'delete_id' in request.form:
             action = Action.query.get(int(request.form.get('delete_id')))
             if action and action.user_id == user.id:
-                # Удаляем связанные отметки
                 ActionMark.query.filter_by(action_id=action.id).delete()
                 db.session.delete(action)
                 db.session.commit()
@@ -445,17 +423,15 @@ def my_actions():
 
     return render_template('my_actions.html', drafts=drafts, published=published, now=datetime.utcnow())
 
+
 @app.route('/get_top_actions')
 def get_top_actions():
     now = datetime.utcnow()
     one_minute_ago = now - timedelta(minutes=1)
 
-    active_actions = Action.query.filter(
-        Action.is_published == True,
-        Action.expires_at > now
-    ).all()
-
+    active_actions = Action.query.filter(Action.is_published == True, Action.expires_at > now).all()
     marks = ActionMark.query.filter(ActionMark.timestamp >= one_minute_ago).all()
+
     from collections import Counter
     mark_counts = Counter(mark.action_id for mark in marks)
 
@@ -469,8 +445,61 @@ def get_top_actions():
         } for a in top_actions
     ])
 
-#with app.app_context():
-    # db.create_all()
+
+@app.route('/friends')
+@login_required
+def friends():
+    # Все пользователи, с кем были общие действия (возможные друзья)
+    user_actions = Action.query.filter_by(user_id=current_user.id).all()
+    user_action_ids = [action.id for action in user_actions]
+
+    marked_user_ids = (
+        db.session.query(ActionMark.user_id)
+        .filter(ActionMark.action_id.in_(user_action_ids))
+        .filter(ActionMark.user_id != current_user.id)
+        .distinct()
+        .all()
+    )
+
+    marked_user_ids = [uid for (uid,) in marked_user_ids]  # Распаковка кортежей
+    suggested_friends = User.query.filter(User.id.in_(marked_user_ids)).all()
+
+    # Входящие заявки в друзья
+    incoming_requests = FriendRequest.query.filter_by(
+        receiver_id=current_user.id,
+        status='pending'
+    ).all()
+
+    incoming_users = [User.query.get(req.sender_id) for req in incoming_requests]
+
+    return render_template(
+        'friends.html',
+        users=suggested_friends,
+        incoming_users=incoming_users
+    )
+
+
+@app.route('/send_friend_request/<int:user_id>', methods=['POST'])
+@login_required
+def send_friend_request(user_id):
+    # Проверяем, нет ли уже такой заявки
+    existing_request = FriendRequest.query.filter_by(
+        sender_id=current_user.id,
+        receiver_id=user_id
+    ).first()
+
+    if existing_request:
+        flash('Вы уже отправили заявку этому пользователю.')
+    elif user_id == current_user.id:
+        flash('Нельзя отправить заявку самому себе.')
+    else:
+        friend_request = FriendRequest(sender_id=current_user.id, receiver_id=user_id)
+        db.session.add(friend_request)
+        db.session.commit()
+        flash('Заявка в друзья отправлена!')
+
+    return redirect(url_for('friends'))
+
 
 if __name__ == '__main__':
     app.run(debug=True)

@@ -10,9 +10,10 @@
     <div class="sidebar">
         <h3>Меню</h3>
         <ul>
-            {% if 'user_id' in session %}
+            {% if current_user.is_authenticated %}
                 <li><a href="{{ url_for('main') }}">Главная</a></li>
                 <li><a href="{{ url_for('profile') }}">Профиль</a></li>
+                <li><a href="{{ url_for('friends') }}">Друзья</a></li>
                 <li><a href="{{ url_for('my_actions') }}">Мои действия</a></li>
                 <li><a href="{{ url_for('world') }}">Наш мир</a></li>
                 <li><a href="{{ url_for('logout') }}">Выход</a></li>

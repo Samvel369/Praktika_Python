@@ -1,0 +1,38 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<h2>Возможные друзья</h2>
+
+{% for user in users %}
+<div style="display: flex; align-items: center; margin-bottom: 20px;">
+    <img src="{{ user.avatar_url }}"
+         alt="avatar"
+         style="width: 60px; height: 60px; object-fit: cover; border-radius: 50%; margin-right: 15px;">
+
+    <div style="flex-grow: 1;">
+        <strong>{{ user.username }}</strong><br>
+        <a href="{{ url_for('view_profile', user_id=user.id) }}">Перейти в профиль</a>
+    </div>
+
+    <form method="post" action="{{ url_for('send_friend_request', user_id=user.id) }}">
+        <button type="submit">Добавить в друзья</button>
+    </form>
+</div>
+{% endfor %}
+
+
+<h2>Заявки в друзья</h2>
+
+{% for user in incoming_users %}
+<div style="display: flex; align-items: center; margin-bottom: 20px;">
+    <img src="{{ user.avatar_url }}"
+         alt="avatar"
+         style="width: 60px; height: 60px; object-fit: cover; border-radius: 50%; margin-right: 15px;">
+
+    <div style="flex-grow: 1;">
+        <strong>{{ user.username }}</strong><br>
+        <a href="{{ url_for('view_profile', user_id=user.id) }}">Перейти в профиль</a>
+    </div>
+</div>
+{% endfor %}
+{% endblock %}

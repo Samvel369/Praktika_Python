@@ -1,0 +1,6 @@
+<h2>{{ user.username }}</h2>
+<img src="{{ user.avatar_url }}" class="avatar">
+<p>Вы можете отправить заявку в друзья:</p>
+<form method="post" action="{{ url_for('send_friend_request', user_id=user.id) }}">
+  <button type="submit">Добавить в друзья</button>
+</form>

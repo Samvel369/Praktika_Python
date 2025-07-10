@@ -95,3 +95,33 @@ h2 {
     margin-bottom: 10px;
     border-radius: 4px;
 }
+
+.friends-list {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    margin-top: 20px;
+}
+
+.friend-item {
+    display: flex;
+    align-items: center;
+    background-color: #f7f7f7;
+    padding: 10px;
+    border-radius: 8px;
+    max-width: 400px;
+}
+
+.avatar {
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    margin-right: 15px;
+    object-fit: cover;
+}
+
+.friend-info {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
