@@ -10,7 +10,7 @@ from flask import redirect, url_for, session, flash
 
 app = Flask(__name__)
 app.secret_key = "mysecretkey"
-app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://samlion:333693@localhost/flaskdb'
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('SQLALCHEMY_DATABASE_URI')
 db = SQLAlchemy(app)
 
 class User(db.Model):
@@ -469,8 +469,8 @@ def get_top_actions():
         } for a in top_actions
     ])
 
-with app.app_context():
-    db.create_all()
+#with app.app_context():
+    # db.create_all()
 
 if __name__ == '__main__':
     app.run(debug=True)
