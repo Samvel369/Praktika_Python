@@ -7,7 +7,8 @@ services:
     container_name: flask-app
     command: flask run --host=0.0.0.0 --port=5000
     volumes:
-      - .:/app
+      - .:/code
+    working_dir: /code  
     ports:
       - "5000:5000"
     depends_on:
@@ -15,6 +16,7 @@ services:
     environment:
       - FLASK_APP=app.py
       - FLASK_ENV=development
+      - FLASK_DEBUG=1
       - SQLALCHEMY_DATABASE_URI=postgresql://samlion:333693@db:5432/flaskdb
 
   db:
