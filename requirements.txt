@@ -4,3 +4,6 @@ Flask-Login
 Flask-Migrate
 psycopg2-binary
 python-dotenv
+flask-socketio
+python-socketio
+eventlet

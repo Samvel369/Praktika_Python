@@ -1,0 +1,138 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<h2>Возможные друзья:</h2>
+
+{% for user in users %}
+<div data-user-id="{{ user.id }}" style="display: flex; align-items: center; margin-bottom: 20px;">
+    <img src="{{ user.avatar_url }}"
+         alt="avatar"
+         style="width: 60px; height: 60px; object-fit: cover; border-radius: 50%; margin-right: 15px;">
+    <div style="flex-grow: 1;">
+        <a href="{{ url_for('view_profile', user_id=user.id) }}">{{ user.username }}</a><br>
+        <a href="{{ url_for('view_profile', user_id=user.id) }}">Перейти в профиль</a>
+    </div>
+    <form method="post" action="{{ url_for('send_friend_request', user_id=user.id) }}">
+        <button type="submit">Добавить в друзья</button>
+    </form>
+</div>
+{% endfor %}
+
+<hr>
+
+<h2>Заявки в друзья:</h2>
+<div id="requests-list">
+{% for req in incoming_requests %}
+  <div data-request-id="{{ req.id }}" style="display: flex; align-items: center; margin-bottom: 20px;">
+    <img src="{{ req.sender.avatar_url }}"
+         alt="avatar"
+         style="width: 60px; height: 60px; object-fit: cover; border-radius: 50%; margin-right: 15px;">
+    <div style="flex-grow: 1;">
+        <strong><a href="{{ url_for('view_profile', user_id=req.sender.id) }}">{{ req.sender.username }}</a></strong><br>
+        <a href="{{ url_for('view_profile', user_id=req.sender.id) }}">Перейти в профиль</a>
+    </div>
+    <form method="post" action="{{ url_for('accept_friend_request', request_id=req.id) }}">
+        <button type="submit">Принять</button>
+    </form>
+  </div>
+</div>
+{% else %}
+<p>Нет новых заявок.</p>
+{% endfor %}
+
+<hr>
+
+<h2>Мои друзья</h2>
+<div id="friends-list">
+{% for user in friends %}
+<div style="display: flex; align-items: center; margin-bottom: 20px;">
+    <img src="{{ user.avatar_url }}"
+         alt="avatar"
+         style="width: 60px; height: 60px; object-fit: cover; border-radius: 50%; margin-right: 15px;">
+    <div style="flex-grow: 1;">
+        <strong><a href="{{ url_for('view_profile', user_id=user.id) }}">{{ user.username }}</a></strong><br>
+        <a href="{{ url_for('view_profile', user_id=user.id) }}">Перейти в профиль</a>
+    </div>
+    <form method="post" action="{{ url_for('remove_friend', user_id=user.id) }}">
+        <button type="submit">Удалить из друзей</button>
+    </form>
+</div>
+{% else %}
+<p id="no-friends-msg">Пока нет друзей.</p>
+{% endfor %}
+</div>
+
+<!-- Socket.IO и логика -->
+<script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+<script>
+  const socket = io();
+
+  socket.on('connect', () => {
+    console.log('Подключено к Socket.IO');
+  });
+
+  socket.on('friend_accepted', function (data) {
+    console.log('Принят друг:', data);
+
+    const requestEl = document.querySelector(`[data-request-id="${data.request_id}"]`);
+    if (requestEl) {
+      requestEl.remove(); // удаление заявки из DOM
+    }
+
+    const friendsList = document.getElementById('friends-list');
+    if (friendsList) {
+      const div = document.createElement('div');
+      div.style.marginBottom = '20px';
+      div.innerHTML = `
+        <div style="display: flex; align-items: center; margin-bottom: 20px;">
+            <img src="${data.friend_avatar}" alt="avatar" style="width: 60px; height: 60px; object-fit: cover; border-radius: 50%; margin-right: 15px;">
+            <div style="flex-grow: 1;">
+            <strong><a href="/profile/${data.friend_id}">${data.friend_username}</a></strong><br>
+            <a href="/profile/${data.friend_id}">Перейти в профиль</a>
+            </div>
+            <form method="post" action="/remove_friend/${data.friend_id}">
+            <button type="submit">Удалить из друзей</button>
+            </form>
+        </div>
+        `;
+      friendsList.appendChild(div);
+
+      const noFriendsMsg = document.getElementById('no-friends-msg');
+      if (noFriendsMsg) {
+      noFriendsMsg.remove(); // убираем текст "Пока нет друзей"
+      }
+    }
+  });
+</script>
+
+<script>
+  socket.on('friend_request_sent', function (data) {
+    console.log('Получена заявка в друзья:', data);
+
+    // Удаляем из "возможных друзей", если есть
+    const possible = document.querySelector(`[data-user-id="${data.sender_id}"]`);
+    if (possible) possible.remove();
+
+    // Добавляем в блок "заявки в друзья"
+    const requestsList = document.getElementById('requests-list');
+    if (requestsList) {
+      const div = document.createElement('div');
+      div.setAttribute('data-request-id', data.request_id);
+      div.innerHTML = `
+        <div style="display: flex; align-items: center; margin-bottom: 20px;">
+          <img src="${data.sender_avatar}" width="60" style="border-radius: 50%; margin-right: 15px;">
+          <div style="flex-grow: 1;">
+            <strong><a href="/profile/${data.sender_id}">${data.sender_username}</a></strong><br>
+            <a href="/profile/${data.sender_id}">Перейти в профиль</a>
+          </div>
+          <form method="post" action="/accept_friend_request/${data.request_id}">
+            <button type="submit">Принять</button>
+          </form>
+        </div>
+      `;
+      requestsList.appendChild(div);
+    }
+  });
+</script>
+
+{% endblock %}

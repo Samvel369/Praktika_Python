@@ -1,38 +1,122 @@
 {% extends 'base.html' %}
-
 {% block content %}
-<h2>Возможные друзья</h2>
-
-{% for user in users %}
-<div style="display: flex; align-items: center; margin-bottom: 20px;">
-    <img src="{{ user.avatar_url }}"
-         alt="avatar"
-         style="width: 60px; height: 60px; object-fit: cover; border-radius: 50%; margin-right: 15px;">
-
-    <div style="flex-grow: 1;">
-        <strong>{{ user.username }}</strong><br>
-        <a href="{{ url_for('view_profile', user_id=user.id) }}">Перейти в профиль</a>
-    </div>
-
-    <form method="post" action="{{ url_for('send_friend_request', user_id=user.id) }}">
+<h2>Возможные друзья:</h2>
+<div id="possible-friends">
+  {% for user in possible_friends %}
+    <div data-user-id="{{ user.id }}" style="display: flex; align-items: center; margin-bottom: 20px;">
+      <img src="{{ user.avatar_url }}" alt="avatar" style="width: 60px; height: 60px; object-fit: cover; border-radius: 50%; margin-right: 15px;">
+      <div style="flex-grow: 1;">
+        <strong><a href="/profile/{{ user.id }}">{{ user.username }}</a></strong><br>
+        <a href="/profile/{{ user.id }}">Перейти в профиль</a>
+      </div>
+      <form method="post" action="/send_friend_request/{{ user.id }}">
         <button type="submit">Добавить в друзья</button>
-    </form>
-</div>
-{% endfor %}
-
-
-<h2>Заявки в друзья</h2>
-
-{% for user in incoming_users %}
-<div style="display: flex; align-items: center; margin-bottom: 20px;">
-    <img src="{{ user.avatar_url }}"
-         alt="avatar"
-         style="width: 60px; height: 60px; object-fit: cover; border-radius: 50%; margin-right: 15px;">
-
-    <div style="flex-grow: 1;">
-        <strong>{{ user.username }}</strong><br>
-        <a href="{{ url_for('view_profile', user_id=user.id) }}">Перейти в профиль</a>
+      </form>
     </div>
+  {% endfor %}
 </div>
-{% endfor %}
+
+<hr>
+<h2>Заявки в друзья:</h2>
+<div id="requests-list">
+  {% for req in incoming_requests %}
+    <div data-request-id="{{ req.id }}" style="display: flex; align-items: center; margin-bottom: 20px;">
+      <img src="{{ req.sender.avatar_url }}" alt="avatar" style="width: 60px; height: 60px; object-fit: cover; border-radius: 50%; margin-right: 15px;">
+      <div style="flex-grow: 1;">
+        <strong><a href="/profile/{{ req.sender.id }}">{{ req.sender.username }}</a></strong><br>
+        <a href="/profile/{{ req.sender.id }}">Перейти в профиль</a>
+      </div>
+      <form method="post" action="/accept_friend_request/{{ req.id }}">
+        <button type="submit">Принять</button>
+      </form>
+    </div>
+  {% else %}
+    <p>Нет новых заявок.</p>
+  {% endfor %}
+</div>
+
+<hr>
+<h2>Мои друзья</h2>
+<div id="friends-list">
+  {% if current_user.friends %}
+    {% for friend in current_user.friends %}
+      <div style="display: flex; align-items: center; margin-bottom: 20px;">
+        <img src="{{ friend.avatar_url }}" alt="avatar" style="width: 60px; height: 60px; object-fit: cover; border-radius: 50%; margin-right: 15px;">
+        <div style="flex-grow: 1;">
+          <strong><a href="/profile/{{ friend.id }}">{{ friend.username }}</a></strong><br>
+          <a href="/profile/{{ friend.id }}">Перейти в профиль</a>
+        </div>
+        <form method="post" action="/remove_friend/{{ friend.id }}">
+          <button type="submit">Удалить из друзей</button>
+        </form>
+      </div>
+    {% endfor %}
+  {% else %}
+    <p id="no-friends-msg">Пока нет друзей.</p>
+  {% endif %}
+</div>
+
+<script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+<script>
+  const socket = io();
+
+  socket.on('connect', () => {
+    console.log('Подключено к серверу Socket.IO');
+  });
+
+  socket.on('friend_accepted', function (data) {
+    console.log('Событие friend_accepted:', data);
+
+    const requestEl = document.querySelector(`[data-request-id="${data.request_id}"]`);
+    if (requestEl) requestEl.remove();
+
+    const noMsg = document.getElementById('no-friends-msg');
+    if (noMsg) noMsg.remove();
+
+    const friendsList = document.getElementById('friends-list');
+    if (friendsList) {
+      const div = document.createElement('div');
+      div.style.display = 'flex';
+      div.style.alignItems = 'center';
+      div.style.marginBottom = '20px';
+      div.innerHTML = `
+        <img src="${data.friend_avatar}" width="60" style="border-radius: 50%; margin-right: 15px;">
+        <div style="flex-grow: 1;">
+          <strong><a href="/profile/${data.friend_id}">${data.friend_username}</a></strong><br>
+          <a href="/profile/${data.friend_id}">Перейти в профиль</a>
+        </div>
+        <form method="post" action="/remove_friend/${data.friend_id}">
+          <button type="submit">Удалить из друзей</button>
+        </form>
+      `;
+      friendsList.appendChild(div);
+    }
+  });
+
+  socket.on('friend_request_sent', function (data) {
+    console.log('Получена заявка в друзья:', data);
+
+    const possible = document.querySelector(`[data-user-id="${data.sender_id}"]`);
+    if (possible) possible.remove();
+
+    const requestsList = document.getElementById('requests-list');
+    if (requestsList) {
+      const div = document.createElement('div');
+      div.setAttribute('data-request-id', data.request_id);
+      div.innerHTML = `
+        <div style="display: flex; align-items: center; margin-bottom: 20px;">
+          <img src="${data.sender_avatar}" width="60" style="border-radius: 50%; margin-right: 15px;">
+          <div style="flex-grow: 1;">
+            <strong><a href="/profile/${data.sender_id}">${data.sender_username}</a></strong><br>
+            <a href="/profile/${data.sender_id}">Перейти в профиль</a>
+          </div>
+          <form method="post" action="/accept_friend_request/${data.request_id}">
+            <button type="submit">Принять</button>
+          </form>
+        </div>
+      `;
+      requestsList.appendChild(div);
+    }
+  });
+</script>
 {% endblock %}
