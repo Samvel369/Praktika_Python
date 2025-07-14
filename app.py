@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, flash, url_for, jsonify
+from flask import Flask, render_template, request, redirect, flash, url_for, jsonify, abort
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta
@@ -14,6 +14,11 @@ app.secret_key = "mysecretkey"
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('SQLALCHEMY_DATABASE_URI')
 db = SQLAlchemy(app)
 socketio = SocketIO(app)
+ignored_users = db.Table(
+    'ignored_users',
+    db.Column('ignorer_id', db.Integer, db.ForeignKey('user.id')),
+    db.Column('ignored_id', db.Integer, db.ForeignKey('user.id'))
+)
 
 login_manager = LoginManager()
 login_manager.login_view = 'login'
@@ -34,7 +39,13 @@ class User(db.Model, UserMixin):
     birthdate = db.Column(db.Date)
     status = db.Column(db.String(100), default="Приветствую всех!")
     about = db.Column(db.Text, default="Пока ничего о себе не рассказал.")
-
+    ignored_users = db.relationship(
+        'User',
+        secondary=ignored_users,
+        primaryjoin=(id == db.foreign(ignored_users.c.ignorer_id)),
+        secondaryjoin=(id == db.foreign(ignored_users.c.ignored_id)),
+        backref='ignored_by'
+    )
 
 class Action(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -61,8 +72,8 @@ class FriendRequest(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     sender_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     receiver_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    status = db.Column(db.String(20), default='pending')  # Добавлено поле
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+    status = db.Column(db.String(20), default='pending')  # 'pending', 'accepted', 'declined'
 
     sender = db.relationship('User', foreign_keys=[sender_id], backref='sent_requests')
     receiver = db.relationship('User', foreign_keys=[receiver_id], backref='received_requests')
@@ -73,7 +84,7 @@ def get_possible_friends(user):
 
     # ID уже отправленных заявок (ожидающих)
     sent_ids = [
-        fr.receiver_id for fr in FriendRequest.query.filter_by(sender_id=user.id, status='pending').all()
+        fr.receiver_id for fr in FriendRequest.query.filter_by(sender_id=user.id, status=True).all()
     ]
 
     # ID тех, кто уже в друзьях
@@ -225,11 +236,11 @@ def view_profile(user_id):
     is_friend = FriendRequest.query.filter_by(
         sender_id=current_user.id,
         receiver_id=user.id,
-        status='accepted'
+        status=True
     ).first() or FriendRequest.query.filter_by(
         sender_id=user.id,
         receiver_id=current_user.id,
-        status='accepted'
+        status=True
     ).first()
 
     # Если друг — показать public-профиль
@@ -479,43 +490,43 @@ def get_top_actions():
     ])
 
 
-@app.route('/friends')
+@app.route("/friends", methods=["GET", "POST"])
 @login_required
 def friends():
-    # Возможные друзья (оставляем как есть)
+    friends_1 = FriendRequest.query.filter_by(sender_id=current_user.id, status='accepted').all()
+    friends_2 = FriendRequest.query.filter_by(receiver_id=current_user.id, status='accepted').all()
+    friends = [req.receiver for req in friends_1] + [req.sender for req in friends_2]
+
+    incoming_requests = FriendRequest.query.filter_by(receiver_id=current_user.id, status='pending').all()
+    outgoing_requests = FriendRequest.query.filter_by(sender_id=current_user.id, status='pending').all()
+
     user_actions = Action.query.filter_by(user_id=current_user.id).all()
     user_action_ids = [action.id for action in user_actions]
 
-    marked_user_ids = (
+    marked_user_ids_raw = (
         db.session.query(ActionMark.user_id)
         .filter(ActionMark.action_id.in_(user_action_ids))
         .filter(ActionMark.user_id != current_user.id)
         .distinct()
         .all()
     )
+    marked_user_ids = [uid for (uid,) in marked_user_ids_raw]
 
-    marked_user_ids = [uid for (uid,) in marked_user_ids]
-    suggested_friends = User.query.filter(User.id.in_(marked_user_ids)).all()
+    exclude_ids = set(
+        [current_user.id] +
+        [r.receiver_id for r in outgoing_requests] +
+        [f.id for f in friends] +
+        [u.id for u in current_user.ignored_users]
+    )
 
-    # Входящие заявки (оставляем объекты FriendRequest)
-    incoming_requests = FriendRequest.query.filter_by(
-        receiver_id=current_user.id, status='pending'
-    ).all()
+    possible_ids = [uid for uid in marked_user_ids if uid not in exclude_ids]
+    users = User.query.filter(User.id.in_(possible_ids)).all()
 
-    # Принятые друзья
-    friends = []
-    requests = FriendRequest.query.filter_by(status='accepted').all()
-    for req in requests:
-        if req.sender_id == current_user.id:
-            friends.append(User.query.get(req.receiver_id))
-        elif req.receiver_id == current_user.id:
-            friends.append(User.query.get(req.sender_id))
-
-    return render_template(
-        'friends.html',
-        users=suggested_friends,
+    return render_template("friends.html",
+        users=users,
+        friends=friends,
         incoming_requests=incoming_requests,
-        friends=friends
+        outgoing_requests=outgoing_requests
     )
 
 @app.route('/send_friend_request/<int:user_id>', methods=['POST'])
@@ -526,23 +537,40 @@ def send_friend_request(user_id):
         flash("Заявка уже отправлена.")
         return redirect(url_for('friends'))
 
-    new_request = FriendRequest(sender_id=current_user.id, receiver_id=user_id)
+    new_request = FriendRequest(sender_id=current_user.id, receiver_id=user_id, status='pending')
     db.session.add(new_request)
     db.session.commit()
 
-    # Подготовка данных для JS
     data = {
         'request_id': new_request.id,
         'sender_id': current_user.id,
         'sender_username': current_user.username,
         'sender_avatar': current_user.avatar_url
     }
-
-    # Отправляем realtime-событие только получателю
     socketio.emit('friend_request_sent', data, to=f"user_{user_id}")
 
     return redirect(url_for('friends'))
 
+@app.route("/cancel_friend_request/<int:request_id>", methods=["POST"])
+@login_required
+def cancel_friend_request(request_id):
+    req = FriendRequest.query.get_or_404(request_id)
+
+    # Проверка: только отправитель или получатель может отменить
+    if req.sender_id != current_user.id and req.receiver_id != current_user.id:
+        abort(403)
+
+    db.session.delete(req)
+    db.session.commit()
+
+    # Отправим сокет событие получателю и отправителю
+    other_user_id = req.receiver_id if req.sender_id == current_user.id else req.sender_id
+    socketio.emit('friend_request_cancelled', {
+        'request_id': req.id,
+        'user_id': current_user.id
+    }, room=f"user_{other_user_id}")
+
+    return redirect(url_for("friends"))
 
 # При обработке приёма заявки
 @app.route('/accept_friend_request/<int:request_id>', methods=['POST'])
@@ -554,11 +582,9 @@ def accept_friend_request(request_id):
         flash("Вы не можете принять эту заявку.")
         return redirect(url_for('friends'))
 
-    # Подтверждаем дружбу
     friend_request.status = 'accepted'
     db.session.commit()
 
-    # Отправка событий двум пользователям
     data = {
         'request_id': request_id,
         'friend_id': current_user.id,
@@ -566,10 +592,7 @@ def accept_friend_request(request_id):
         'friend_avatar': current_user.avatar_url
     }
 
-    # Отправка отправителю заявки
     socketio.emit('friend_accepted', data, to=f"user_{friend_request.sender.id}")
-    
-    # Отправка получателю заявки
     socketio.emit('friend_accepted', data, to=f"user_{friend_request.receiver_id}")
 
     return redirect(url_for('friends'))
@@ -582,23 +605,32 @@ def handle_connect():
 @app.route('/remove_friend/<int:user_id>', methods=['POST'])
 @login_required
 def remove_friend(user_id):
-    # Находим заявку в обе стороны
-    request = FriendRequest.query.filter(
-        or_(
-            and_(FriendRequest.sender_id == current_user.id, FriendRequest.receiver_id == user_id),
-            and_(FriendRequest.sender_id == user_id, FriendRequest.receiver_id == current_user.id)
-        ),
-        FriendRequest.status == 'accepted'
-    ).first()
+    req1 = FriendRequest.query.filter_by(sender_id=current_user.id, receiver_id=user_id, status='accepted').first()
+    req2 = FriendRequest.query.filter_by(sender_id=user_id, receiver_id=current_user.id, status='accepted').first()
 
-    if request:
-        db.session.delete(request)
-        db.session.commit()
-        flash('Пользователь удалён из друзей.')
-    else:
-        flash('Вы больше не друзья.')
+    if req1:
+        db.session.delete(req1)
+    if req2:
+        db.session.delete(req2)
+
+    db.session.commit()
+    flash('Пользователь удалён из друзей.')
+
+    # Уведомляем другого пользователя в реальном времени
+    socketio.emit('friend_removed', {
+        'user_id': current_user.id
+    }, room=f'user_{user_id}')
 
     return redirect(url_for('friends'))
+
+@app.route("/remove_possible_friend/<int:user_id>", methods=["POST"])
+@login_required
+def remove_possible_friend(user_id):
+    user_to_ignore = User.query.get_or_404(user_id)
+    if user_to_ignore not in current_user.ignored_users:
+        current_user.ignored_users.append(user_to_ignore)
+        db.session.commit()
+    return redirect(url_for("friends"))
 
 @app.route('/debug/friends')
 @login_required
