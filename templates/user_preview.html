@@ -1,17 +1,19 @@
 {% extends 'base.html' %}
 {% block content %}
-<h2>  /h2>
+
+<h2>{{ user.username }}</h2>
 <img src="{{ user.avatar_url }}" width="100" style="border-radius: 50%"><br><br>
 
 {% if full_access %}
-<p>Email: {{ user.email }}</p>
-<p>О себе: {{ user.about }}</p>
-<!-- Добавь другие поля, если нужно -->
+    <p>Email: {{ user.email }}</p>
+    <p>О себе: {{ user.about }}</p>
 {% else %}
-<form method="post" action="{{ url_for('send_friend_request', user_id=user.id) }}">
-  <button type="submit">Добавить в друзья</button>
-</form>
+    <form method="post" action="{{ url_for('send_friend_request', user_id=user.id) }}">
+        <button type="submit">Добавить в друзья</button>
+    </form>
 {% endif %}
 
-<a href="{{ url_for('friends') }}">← Назад</a>
+<br>
+<a href="{{ url_for('friends') }}">&larr; Назад</a>
+
 {% endblock %}

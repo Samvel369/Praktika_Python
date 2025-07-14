@@ -232,15 +232,15 @@ def view_profile(user_id):
     if user.id == current_user.id:
         return render_template('profile.html', user=user)
 
-    # Проверка: друзья или нет
+    # Проверка: друг или нет
     is_friend = FriendRequest.query.filter_by(
         sender_id=current_user.id,
         receiver_id=user.id,
-        status=True
+        status='accepted'  # <--- Важно: сравниваем со строкой
     ).first() or FriendRequest.query.filter_by(
         sender_id=user.id,
         receiver_id=current_user.id,
-        status=True
+        status='accepted'
     ).first()
 
     # Если друг — показать public-профиль
