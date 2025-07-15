@@ -77,6 +77,12 @@ class FriendRequest(db.Model):
 
     sender = db.relationship('User', foreign_keys=[sender_id], backref='sent_requests')
     receiver = db.relationship('User', foreign_keys=[receiver_id], backref='received_requests')
+    
+class Subscriber(db.Model):
+    __tablename__ = 'subscribers'
+    id = db.Column(db.Integer, primary_key=True)
+    subscriber_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    owner_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
 
 def get_possible_friends(user):
     # Все пользователи, кроме себя
@@ -376,7 +382,17 @@ def mark_action(action_id):
     new_mark = ActionMark(user_id=user_id, action_id=action_id)
     db.session.add(new_mark)
     db.session.commit()
+
+    # Уведомим автора действия в реальном времени
+    action = Action.query.get(action_id)
+    if action and action.user_id != current_user.id:
+        socketio.emit('update_possible_friends', {
+            'user_id': current_user.id,
+            'username': current_user.username
+        }, room=f"user_{action.user_id}")
+
     return jsonify({'success': True})
+
 
 
 @app.route('/get_mark_counts')
@@ -493,16 +509,20 @@ def get_top_actions():
 @app.route("/friends", methods=["GET", "POST"])
 @login_required
 def friends():
+    # Принятые друзья
     friends_1 = FriendRequest.query.filter_by(sender_id=current_user.id, status='accepted').all()
     friends_2 = FriendRequest.query.filter_by(receiver_id=current_user.id, status='accepted').all()
     friends = [req.receiver for req in friends_1] + [req.sender for req in friends_2]
 
+    # Входящие и исходящие заявки
     incoming_requests = FriendRequest.query.filter_by(receiver_id=current_user.id, status='pending').all()
     outgoing_requests = FriendRequest.query.filter_by(sender_id=current_user.id, status='pending').all()
 
+    # Все действия текущего пользователя
     user_actions = Action.query.filter_by(user_id=current_user.id).all()
     user_action_ids = [action.id for action in user_actions]
 
+    # Пользователи, отметившиеся на моих действиях
     marked_user_ids_raw = (
         db.session.query(ActionMark.user_id)
         .filter(ActionMark.action_id.in_(user_action_ids))
@@ -512,21 +532,46 @@ def friends():
     )
     marked_user_ids = [uid for (uid,) in marked_user_ids_raw]
 
+    # Подписчики (отметились, но не в друзьях и не в заявках)
+    subscriber_entries = Subscriber.query.filter_by(owner_id=current_user.id).all()
+    subscribed_ids = [s.subscriber_id for s in subscriber_entries]
+
+    # Исключаем: себя, друзей, заявки, игнор и подписчиков
     exclude_ids = set(
         [current_user.id] +
         [r.receiver_id for r in outgoing_requests] +
+        [r.sender_id for r in incoming_requests] +
         [f.id for f in friends] +
-        [u.id for u in current_user.ignored_users]
+        subscribed_ids
     )
 
+    # Если есть поле ignored_users — учитываем
+    if hasattr(current_user, 'ignored_users'):
+        exclude_ids.update(u.id for u in current_user.ignored_users)
+
+    # Возможные друзья = те, кто отметился, но не в исключениях
     possible_ids = [uid for uid in marked_user_ids if uid not in exclude_ids]
     users = User.query.filter(User.id.in_(possible_ids)).all()
 
-    return render_template("friends.html",
+    # Подписчики
+    subscribers = User.query.filter(User.id.in_(subscribed_ids)).all()
+
+    # Пользователи, на которых текущий подписан
+    subscriptions = (
+        db.session.query(User)
+        .join(Subscriber, Subscriber.owner_id == User.id)
+        .filter(Subscriber.subscriber_id == current_user.id)
+        .all()
+    )
+
+    return render_template(
+        "friends.html",
         users=users,
         friends=friends,
         incoming_requests=incoming_requests,
-        outgoing_requests=outgoing_requests
+        outgoing_requests=outgoing_requests,
+        subscribers=subscribers,
+        subscriptions=subscriptions  # <-- добавили список подписок
     )
 
 @app.route('/send_friend_request/<int:user_id>', methods=['POST'])
@@ -537,10 +582,25 @@ def send_friend_request(user_id):
         flash("Заявка уже отправлена.")
         return redirect(url_for('friends'))
 
-    new_request = FriendRequest(sender_id=current_user.id, receiver_id=user_id, status='pending')
+    # Создаём новую заявку
+    new_request = FriendRequest(
+        sender_id=current_user.id,
+        receiver_id=user_id,
+        status='pending'
+    )
     db.session.add(new_request)
+
+    # 🧹 Удаляем из подписчиков, если такой есть
+    subscriber = Subscriber.query.filter_by(
+        owner_id=current_user.id,
+        subscriber_id=user_id
+    ).first()
+    if subscriber:
+        db.session.delete(subscriber)
+
     db.session.commit()
 
+    # Уведомляем через Socket.IO
     data = {
         'request_id': new_request.id,
         'sender_id': current_user.id,
@@ -560,15 +620,42 @@ def cancel_friend_request(request_id):
     if req.sender_id != current_user.id and req.receiver_id != current_user.id:
         abort(403)
 
+    # Определим другую сторону
+    other_user_id = req.receiver_id if req.sender_id == current_user.id else req.sender_id
+
+    # Если передан флаг подписки — добавим запись в таблицу подписчиков
+    if request.form.get("subscribe") == "true":
+        existing = Subscriber.query.filter_by(
+            subscriber_id=current_user.id,
+            owner_id=other_user_id
+        ).first()
+        if not existing:
+            new_sub = Subscriber(subscriber_id=current_user.id, owner_id=other_user_id)
+            db.session.add(new_sub)
+            db.session.commit()
+
+            # Реалтайм-сообщение владельцу
+            subscriber_data = {
+                'subscriber_id': current_user.id,
+                'subscriber_username': current_user.username,
+                'subscriber_avatar': current_user.avatar_url
+            }
+            socketio.emit("new_subscriber", subscriber_data, to=f"user_{other_user_id}")
+
+    # Удаляем заявку
     db.session.delete(req)
     db.session.commit()
 
-    # Отправим сокет событие получателю и отправителю
-    other_user_id = req.receiver_id if req.sender_id == current_user.id else req.sender_id
+    # Отправим событие обеим сторонам
     socketio.emit('friend_request_cancelled', {
-        'request_id': req.id,
+        'request_id': request_id,
         'user_id': current_user.id
     }, room=f"user_{other_user_id}")
+
+    socketio.emit('friend_request_cancelled', {
+        'request_id': request_id,
+        'user_id': other_user_id
+    }, room=f"user_{current_user.id}")
 
     return redirect(url_for("friends"))
 
@@ -577,14 +664,31 @@ def cancel_friend_request(request_id):
 @login_required
 def accept_friend_request(request_id):
     friend_request = FriendRequest.query.get_or_404(request_id)
-    
+
+    # Только получатель может принять
     if friend_request.receiver_id != current_user.id:
         flash("Вы не можете принять эту заявку.")
         return redirect(url_for('friends'))
 
     friend_request.status = 'accepted'
+
+    # Удаляем подписку, если sender был подписчиком receiver
+    subscription = Subscriber.query.filter_by(
+        owner_id=friend_request.receiver_id,
+        subscriber_id=friend_request.sender_id
+    ).first()
+
+    if subscription:
+        db.session.delete(subscription)
+
+        # Уведомим sender'а, что его подписка исчезла
+        socketio.emit('subscriber_removed', {
+            'subscriber_id': friend_request.sender_id
+        }, to=f"user_{friend_request.receiver_id}")
+
     db.session.commit()
 
+    # Отправка данных в обе стороны
     data = {
         'request_id': request_id,
         'friend_id': current_user.id,
@@ -592,7 +696,7 @@ def accept_friend_request(request_id):
         'friend_avatar': current_user.avatar_url
     }
 
-    socketio.emit('friend_accepted', data, to=f"user_{friend_request.sender.id}")
+    socketio.emit('friend_accepted', data, to=f"user_{friend_request.sender_id}")
     socketio.emit('friend_accepted', data, to=f"user_{friend_request.receiver_id}")
 
     return redirect(url_for('friends'))
@@ -601,6 +705,11 @@ def accept_friend_request(request_id):
 def handle_connect():
     if current_user.is_authenticated:
         join_room(f"user_{current_user.id}")
+        
+@socketio.on('join')
+def on_join(data):
+    room = data.get('room')
+    join_room(room)
 
 @app.route('/remove_friend/<int:user_id>', methods=['POST'])
 @login_required
@@ -631,6 +740,52 @@ def remove_possible_friend(user_id):
         current_user.ignored_users.append(user_to_ignore)
         db.session.commit()
     return redirect(url_for("friends"))
+
+@app.route('/subscribe/<int:user_id>', methods=['POST'])
+@login_required
+def subscribe(user_id):
+    # Проверка: нельзя подписаться на себя
+    if user_id == current_user.id:
+        abort(400)
+
+    # Проверка: уже подписан
+    existing = Subscriber.query.filter_by(subscriber_id=current_user.id, owner_id=user_id).first()
+    if existing:
+        flash("Вы уже подписаны.")
+        return redirect(url_for('friends'))
+
+    # Создание подписки
+    new_sub = Subscriber(subscriber_id=current_user.id, owner_id=user_id)
+    db.session.add(new_sub)
+    db.session.commit()
+
+    # Отправка сокет-события пользователю-владельцу
+    data = {
+        'subscriber_id': current_user.id,
+        'subscriber_username': current_user.username,
+        'subscriber_avatar': current_user.avatar_url,
+    }
+    socketio.emit('new_subscriber', {
+        'subscriber_id': current_user.id,
+        'subscriber_username': current_user.username,
+        'subscriber_avatar': current_user.avatar_url
+    }, to=f"user_{user_id}")
+
+    return redirect(url_for('friends'))
+
+
+@app.route('/leave_in_subscribers/<int:user_id>', methods=['POST'])
+@login_required
+def leave_in_subscribers(user_id):
+    if user_id == current_user.id:
+        return redirect(url_for('friends'))
+
+    existing = Subscriber.query.filter_by(subscriber_id=user_id, owner_id=current_user.id).first()
+    if not existing:
+        sub = Subscriber(subscriber_id=user_id, owner_id=current_user.id)
+        db.session.add(sub)
+        db.session.commit()
+    return redirect(url_for('friends'))
 
 @app.route('/debug/friends')
 @login_required

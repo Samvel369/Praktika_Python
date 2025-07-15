@@ -18,8 +18,8 @@
           <form method="post" action="{{ url_for('send_friend_request', user_id=user.id) }}" style="margin-right: 5px;">
             <button type="submit">Добавить в друзья</button>
           </form>
-          <form method="post" action="{{ url_for('remove_possible_friend', user_id=user.id) }}">
-            <button type="submit">Удалить</button>
+          <form method="post" action="{{ url_for('subscribe', user_id=user.id) }}">
+            <button type="submit">Подписаться</button>
           </form>
         </div>
       {% endfor %}
@@ -46,8 +46,9 @@
           <form method="post" action="{{ url_for('accept_friend_request', request_id=req.id) }}" style="margin-right: 5px;">
             <button type="submit">Принять</button>
           </form>
-          <form method="post" action="{{ url_for('cancel_friend_request', request_id=req.id) }}">
-            <button type="submit">Отменить</button>
+          <form method="POST" action="{{ url_for('cancel_friend_request', request_id=req.id) }}">
+              <input type="hidden" name="subscribe" value="true">
+              <button type="submit">Оставить в подписчиках</button>
           </form>
         </div>
       {% endfor %}
@@ -109,6 +110,56 @@
     </div>
   </section>
 
+  <hr>
+
+  <section>
+    <h2>Подписчики:</h2>
+    {% if subscribers %}
+      {% for subscriber in subscribers %}
+        <div style="display: flex; align-items: center; margin-bottom: 20px;">
+          <img src="{{ subscriber.avatar_url }}" alt="avatar"
+              style="width: 60px; height: 60px; object-fit: cover; border-radius: 50%; margin-right: 15px;">
+          <div style="flex-grow: 1;">
+            <strong>
+              <a href="{{ url_for('view_profile', user_id=subscriber.id) }}">
+                {{ subscriber.username }}
+              </a>
+            </strong>
+            <br>
+            <a href="{{ url_for('view_profile', user_id=subscriber.id) }}">Перейти в профиль</a>
+          </div>
+        </div>
+      {% endfor %}
+    {% else %}
+      <p>Нет подписчиков.</p>
+    {% endif %}
+  </section>
+
+  <!-- 🔽 Новый блок "Подписан:" -->
+  <section>
+    <h2>Подписан:</h2>
+    {% if subscriptions %}
+      {% for user in subscriptions %}
+        <div style="display: flex; align-items: center; margin-bottom: 20px;">
+          <img src="{{ user.avatar_url }}" alt="avatar"
+              style="width: 60px; height: 60px; object-fit: cover; border-radius: 50%; margin-right: 15px;">
+          <div style="flex-grow: 1;">
+            <strong>
+              <a href="{{ url_for('view_profile', user_id=user.id) }}">
+                {{ user.username }}
+              </a>
+            </strong>
+            <br>
+            <a href="{{ url_for('view_profile', user_id=user.id) }}">Перейти в профиль</a>
+          </div>
+        </div>
+      {% endfor %}
+    {% else %}
+      <p>Вы ни на кого не подписаны.</p>
+    {% endif %}
+  </section>
+
+
 </div>
 
 <!-- Подключение Socket.IO и реалтайм логика -->
@@ -154,6 +205,40 @@
   socket.on('friend_request_cancelled', function (data) {
     const requestEl = document.querySelector(`[data-request-id="${data.request_id}"]`);
     if (requestEl) requestEl.remove();
+  });
+
+  socket.on('update_possible_friends', function(data) {
+        // Можно просто обновить страницу или конкретный блок
+        location.reload();
+    });
+
+    socket.on('friend_request_cancelled', function(data) {
+        location.reload(); // можно заменить на обновление только блока
+    });
+
+    socket.on('new_subscriber', function(data) {
+    const subscribersBlock = document.querySelector('section h2:contains("Подписчики:")')?.parentElement;
+    if (!subscribersBlock) return;
+
+    const noSubsMsg = subscribersBlock.querySelector('p');
+    if (noSubsMsg) noSubsMsg.remove();
+
+    const div = document.createElement('div');
+    div.style = "display: flex; align-items: center; margin-bottom: 20px;";
+    div.innerHTML = `
+      <img src="${data.subscriber_avatar}" alt="avatar"
+          style="width: 60px; height: 60px; object-fit: cover; border-radius: 50%; margin-right: 15px;">
+      <div style="flex-grow: 1;">
+        <strong>
+          <a href="/profile/${data.subscriber_id}">
+            ${data.subscriber_username}
+          </a>
+        </strong>
+        <br>
+        <a href="/profile/${data.subscriber_id}">Перейти в профиль</a>
+      </div>
+    `;
+    subscribersBlock.appendChild(div);
   });
 
   socket.on('friend_request_sent', function (data) {

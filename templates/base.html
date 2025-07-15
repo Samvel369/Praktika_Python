@@ -8,6 +8,11 @@
 <body>
 <div class="container">
     <div class="sidebar">
+        {% if current_user.is_authenticated %}
+            <div style="margin-bottom: 10px; font-weight: bold;">
+                👤 {{ current_user.username }}
+            </div>
+            {% endif %}
         <h3>Меню</h3>
         <ul>
             {% if current_user.is_authenticated %}

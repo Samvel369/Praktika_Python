@@ -7,7 +7,7 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Импортируем объект db и модели из app.py
-from app import db, User, Action, ActionMark
+from app import db, User, Action, ActionMark, FriendRequest
 
 # Alembic Config
 config = context.config
