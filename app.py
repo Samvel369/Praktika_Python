@@ -1,8 +1,9 @@
-from flask import Flask, render_template, request, redirect, flash, url_for, jsonify, abort
+from flask import Flask, render_template, request, redirect, flash, url_for, jsonify, abort, session
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta
 import os
+import uuid
 from werkzeug.utils import secure_filename
 from flask_login import LoginManager, login_user, logout_user, current_user, login_required, UserMixin
 from sqlalchemy import or_, and_
@@ -35,7 +36,7 @@ class User(db.Model, UserMixin):
     email = db.Column(db.String(120), nullable=False, unique=True)
     password = db.Column(db.String(256), nullable=False)
     last_active = db.Column(db.DateTime, default=datetime.utcnow)
-    avatar_url = db.Column(db.String(300), default="/static/default-avatar.png")
+    avatar_url = db.Column(db.String(300), default="/static/uploads/default-avatar.png")
     birthdate = db.Column(db.Date)
     status = db.Column(db.String(100), default="Приветствую всех!")
     about = db.Column(db.Text, default="Пока ничего о себе не рассказал.")
@@ -83,6 +84,15 @@ class Subscriber(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     subscriber_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     owner_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+
+class PotentialFriendView(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    viewer_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+
+    viewer = db.relationship('User', foreign_keys=[viewer_id], backref='potential_views')
+    user = db.relationship('User', foreign_keys=[user_id])
 
 def get_possible_friends(user):
     # Все пользователи, кроме себя
@@ -202,31 +212,40 @@ def logout():
 def profile():
     return render_template('profile.html', user=current_user)
 
-
 @app.route('/edit_profile', methods=['GET', 'POST'])
 @login_required
 def edit_profile():
     user = current_user
+
     if request.method == 'POST':
+        # Загружаем аватар
         if 'avatar' in request.files:
             avatar = request.files['avatar']
             if avatar and avatar.filename != '':
-                filename = secure_filename(avatar.filename)
-                filepath = os.path.join('static/uploads', filename)
-                avatar.save(filepath)
-                user.avatar_url = '/' + filepath
+                ext = avatar.filename.rsplit('.', 1)[-1].lower()
+                allowed = {"png", "jpg", "jpeg", "gif"}
+                if ext in allowed:
+                    filename = f"{uuid.uuid4().hex}.{ext}"
+                    upload_path = os.path.join('static', 'uploads', filename)
+                    os.makedirs(os.path.dirname(upload_path), exist_ok=True)
+                    avatar.save(upload_path)
+                    user.avatar_url = f"/static/uploads/{filename}"
 
+        # Обработка остальных полей
         birthdate_input = request.form.get('birthdate')
         if birthdate_input:
             try:
                 user.birthdate = datetime.strptime(birthdate_input, '%Y-%m-%d').date()
             except:
                 flash("Неверный формат даты")
+
         user.status = request.form.get('status') or ''
         user.about = request.form.get('about') or ''
+
         db.session.commit()
         flash("Профиль обновлён!")
         return redirect(url_for('profile'))
+
     return render_template('edit_profile.html', user=user)
 
 @app.route('/profile/<int:user_id>')
@@ -255,6 +274,30 @@ def view_profile(user_id):
 
     # Не друг — ограниченный просмотр
     return render_template('user_preview.html', user=user)
+
+@app.route('/upload_avatar', methods=['POST'])
+@login_required
+def upload_avatar():
+    file = request.files.get('avatar')
+    if file and '.' in file.filename:
+        ext = file.filename.rsplit('.', 1)[1].lower()
+        allowed = {"png", "jpg", "jpeg", "gif"}
+        if ext in allowed:
+            filename = f"{uuid.uuid4().hex}.{ext}"
+            upload_path = os.path.join("static", "uploads", filename)
+            os.makedirs(os.path.dirname(upload_path), exist_ok=True)
+            file.save(upload_path)
+
+            # Обновляем путь к аватару только у текущего пользователя
+            current_user.avatar_url = f"/static/uploads/{filename}"
+            db.session.commit()
+            flash("Аватар успешно обновлён.")
+        else:
+            flash("Недопустимый формат файла.")
+    else:
+        flash("Файл не выбран.")
+    
+    return redirect(url_for("profile"))
 
 @app.route('/world', methods=['GET', 'POST'])
 @login_required
@@ -372,7 +415,7 @@ def mark_action(action_id):
     now = datetime.utcnow()
     ten_minutes_ago = now - timedelta(minutes=10)
 
-    recent_mark = ActionMark.query.filter_by(user_id=user_id, action_id=action_id)\
+    recent_mark = ActionMark.query.filter_by(user_id=user_id, action_id=action_id) \
         .filter(ActionMark.timestamp >= ten_minutes_ago).first()
 
     if recent_mark:
@@ -386,14 +429,28 @@ def mark_action(action_id):
     # Уведомим автора действия в реальном времени
     action = Action.query.get(action_id)
     if action and action.user_id != current_user.id:
+        # Добавляем в PotentialFriendView, если ещё не добавлен
+        existing = PotentialFriendView.query.filter_by(
+            viewer_id=action.user_id,
+            user_id=current_user.id
+        ).first()
+
+        if not existing:
+            view = PotentialFriendView(
+                viewer_id=action.user_id,
+                user_id=current_user.id,
+                timestamp=datetime.utcnow()
+            )
+            db.session.add(view)
+            db.session.commit()
+
+        # Отправка через socket
         socketio.emit('update_possible_friends', {
             'user_id': current_user.id,
-            'username': current_user.username
+            'username': current_user.username,
         }, room=f"user_{action.user_id}")
 
     return jsonify({'success': True})
-
-
 
 @app.route('/get_mark_counts')
 def get_mark_counts():
@@ -545,18 +602,34 @@ def friends():
         subscribed_ids
     )
 
-    # Если есть поле ignored_users — учитываем
     if hasattr(current_user, 'ignored_users'):
         exclude_ids.update(u.id for u in current_user.ignored_users)
 
-    # Возможные друзья = те, кто отметился, но не в исключениях
-    possible_ids = [uid for uid in marked_user_ids if uid not in exclude_ids]
+    # ===== НОВОЕ: фильтрация по времени хранения =====
+    if request.method == 'POST':
+        selected_minutes = int(request.form.get('cleanup_minutes', 10))
+        session['cleanup_minutes'] = selected_minutes
+        return redirect(url_for('friends'))
+
+    cleanup_minutes = session.get('cleanup_minutes', 10)
+    threshold_time = datetime.utcnow() - timedelta(minutes=cleanup_minutes)
+
+    recent_potential_ids = db.session.query(PotentialFriendView.user_id) \
+        .filter(PotentialFriendView.viewer_id == current_user.id) \
+        .filter(PotentialFriendView.timestamp >= threshold_time).all()
+    recent_ids = [uid for (uid,) in recent_potential_ids]
+
+    # Возможные друзья = отметились, не в исключениях, и не устарели
+    possible_ids = [
+        uid for uid in marked_user_ids
+        if uid not in exclude_ids and uid in recent_ids
+    ]
     users = User.query.filter(User.id.in_(possible_ids)).all()
 
     # Подписчики
     subscribers = User.query.filter(User.id.in_(subscribed_ids)).all()
 
-    # Пользователи, на которых текущий подписан
+    # Подписки
     subscriptions = (
         db.session.query(User)
         .join(Subscriber, Subscriber.owner_id == User.id)
@@ -571,7 +644,8 @@ def friends():
         incoming_requests=incoming_requests,
         outgoing_requests=outgoing_requests,
         subscribers=subscribers,
-        subscriptions=subscriptions  # <-- добавили список подписок
+        subscriptions=subscriptions,
+        cleanup_minutes=cleanup_minutes  # передаём в шаблон
     )
 
 @app.route('/send_friend_request/<int:user_id>', methods=['POST'])
@@ -620,42 +694,56 @@ def cancel_friend_request(request_id):
     if req.sender_id != current_user.id and req.receiver_id != current_user.id:
         abort(403)
 
-    # Определим другую сторону
-    other_user_id = req.receiver_id if req.sender_id == current_user.id else req.sender_id
+    # Флаг подписки
+    subscribe_flag = request.form.get("subscribe") == "true"
 
-    # Если передан флаг подписки — добавим запись в таблицу подписчиков
-    if request.form.get("subscribe") == "true":
+    if subscribe_flag:
+        # Кто кого подписывает:
+        # current_user — это получатель заявки (оставляющий в подписчиках)
+        # req.sender_id — это отправитель заявки
+        subscriber_id = req.sender_id
+        owner_id = current_user.id
+
         existing = Subscriber.query.filter_by(
-            subscriber_id=current_user.id,
-            owner_id=other_user_id
+            subscriber_id=subscriber_id,
+            owner_id=owner_id
         ).first()
+
         if not existing:
-            new_sub = Subscriber(subscriber_id=current_user.id, owner_id=other_user_id)
+            new_sub = Subscriber(subscriber_id=subscriber_id, owner_id=owner_id)
             db.session.add(new_sub)
             db.session.commit()
 
-            # Реалтайм-сообщение владельцу
+            # Реалтайм-сообщение владельцу (current_user)
+            subscriber_user = User.query.get(subscriber_id)
             subscriber_data = {
-                'subscriber_id': current_user.id,
-                'subscriber_username': current_user.username,
-                'subscriber_avatar': current_user.avatar_url
+                'subscriber_id': subscriber_user.id,
+                'subscriber_username': subscriber_user.username,
+                'subscriber_avatar': subscriber_user.avatar_url
             }
-            socketio.emit("new_subscriber", subscriber_data, to=f"user_{other_user_id}")
+            socketio.emit("new_subscriber", subscriber_data, to=f"user_{owner_id}")
+
+            # Реалтайм-сообщение подписчику
+            socketio.emit("subscribed_to", {
+                'user_id': owner_id,
+                'username': current_user.username,
+                'avatar': current_user.avatar_url
+            }, to=f"user_{subscriber_id}")
 
     # Удаляем заявку
     db.session.delete(req)
     db.session.commit()
 
-    # Отправим событие обеим сторонам
+    # Уведомим обе стороны
     socketio.emit('friend_request_cancelled', {
         'request_id': request_id,
-        'user_id': current_user.id
-    }, room=f"user_{other_user_id}")
+        'user_id': current_user.id,
+    }, room=f"user_{req.sender_id}")
 
     socketio.emit('friend_request_cancelled', {
         'request_id': request_id,
-        'user_id': other_user_id
-    }, room=f"user_{current_user.id}")
+        'user_id': current_user.id,
+    }, room=f"user_{req.receiver_id}")
 
     return redirect(url_for("friends"))
 
