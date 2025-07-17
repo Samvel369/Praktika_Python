@@ -7,14 +7,13 @@ import uuid
 from werkzeug.utils import secure_filename
 from flask_login import LoginManager, login_user, logout_user, current_user, login_required, UserMixin
 from sqlalchemy import or_, and_
-from flask_socketio import SocketIO
-from flask_socketio import emit, join_room
+from flask_socketio import emit, join_room, SocketIO
 
 app = Flask(__name__)
 app.secret_key = "mysecretkey"
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('SQLALCHEMY_DATABASE_URI')
 db = SQLAlchemy(app)
-socketio = SocketIO(app)
+socketio = SocketIO(app, async_mode='eventlet')
 ignored_users = db.Table(
     'ignored_users',
     db.Column('ignorer_id', db.Integer, db.ForeignKey('user.id')),
@@ -415,40 +414,54 @@ def mark_action(action_id):
     now = datetime.utcnow()
     ten_minutes_ago = now - timedelta(minutes=10)
 
+    print(f"✅ [mark_action] Пользователь {user_id} отмечает действие {action_id} в {now}")
+
+    # Проверка на повторную отметку
     recent_mark = ActionMark.query.filter_by(user_id=user_id, action_id=action_id) \
         .filter(ActionMark.timestamp >= ten_minutes_ago).first()
-
     if recent_mark:
         remaining = 600 - int((now - recent_mark.timestamp).total_seconds())
+        print("⏱ Уже была отметка. Ждём:", remaining, "секунд")
         return jsonify({'error': 'wait', 'remaining': remaining})
 
+    # Добавляем новую отметку
+    print("➕ Добавляем новую отметку")
     new_mark = ActionMark(user_id=user_id, action_id=action_id)
     db.session.add(new_mark)
     db.session.commit()
 
-    # Уведомим автора действия в реальном времени
+    # Уведомляем автора
     action = Action.query.get(action_id)
-    if action and action.user_id != current_user.id:
-        # Добавляем в PotentialFriendView, если ещё не добавлен
-        existing = PotentialFriendView.query.filter_by(
+    if action and action.user_id != user_id:
+        print(f"📣 Действие принадлежит пользователю {action.user_id}, проверим potential_friend_view")
+
+        existing_view = PotentialFriendView.query.filter_by(
             viewer_id=action.user_id,
-            user_id=current_user.id
+            user_id=user_id
         ).first()
 
-        if not existing:
+        if not existing_view:
+            print("🆕 Нет записи — добавим")
             view = PotentialFriendView(
                 viewer_id=action.user_id,
-                user_id=current_user.id,
-                timestamp=datetime.utcnow()
+                user_id=user_id,
+                timestamp=now
             )
             db.session.add(view)
             db.session.commit()
+        else:
+            print("⚠ Запись уже есть, не добавляем")
 
-        # Отправка через socket
-        socketio.emit('update_possible_friends', {
-            'user_id': current_user.id,
-            'username': current_user.username,
-        }, room=f"user_{action.user_id}")
+        # Отправим сокет-событие
+        print(f"📤 Отправка socketio-события в комнату user_{action.user_id}")
+        socketio.emit(
+            'update_possible_friends',
+            {
+                'user_id': user_id,
+                'username': current_user.username
+            },
+            to=f'user_{action.user_id}'
+        )
 
     return jsonify({'success': True})
 
@@ -607,12 +620,12 @@ def friends():
 
     # ===== НОВОЕ: фильтрация по времени хранения =====
     if request.method == 'POST':
-        selected_minutes = int(request.form.get('cleanup_minutes', 10))
-        session['cleanup_minutes'] = selected_minutes
+        selected_minutes = int(request.form.get('cleanup_time', 10))
+        session['cleanup_time'] = selected_minutes
         return redirect(url_for('friends'))
 
-    cleanup_minutes = session.get('cleanup_minutes', 10)
-    threshold_time = datetime.utcnow() - timedelta(minutes=cleanup_minutes)
+    cleanup_time = session.get('cleanup_time', 10)
+    threshold_time = datetime.utcnow() - timedelta(minutes=cleanup_time)
 
     recent_potential_ids = db.session.query(PotentialFriendView.user_id) \
         .filter(PotentialFriendView.viewer_id == current_user.id) \
@@ -645,7 +658,67 @@ def friends():
         outgoing_requests=outgoing_requests,
         subscribers=subscribers,
         subscriptions=subscriptions,
-        cleanup_minutes=cleanup_minutes  # передаём в шаблон
+        cleanup_time=cleanup_time  # передаём в шаблон
+    )
+    
+def get_friend_ids(user_id):
+    friend_ids = set()
+
+    # Принятые заявки — мы добавили или нас добавили
+    accepted_requests = FriendRequest.query.filter(
+        ((FriendRequest.sender_id == user_id) | (FriendRequest.receiver_id == user_id)) &
+        (FriendRequest.status == 'accepted')
+    ).all()
+
+    for fr in accepted_requests:
+        if fr.sender_id != user_id:
+            friend_ids.add(fr.sender_id)
+        if fr.receiver_id != user_id:
+            friend_ids.add(fr.receiver_id)
+
+    return friend_ids
+
+@app.route('/friends_partial')
+@login_required
+def friends_partial():
+    cleanup_time = session.get('cleanup_time', 10)
+    cutoff = datetime.utcnow() - timedelta(minutes=cleanup_time)
+
+    # 🔎 Найдём user_id всех, кто отмечался на действиях текущего пользователя
+    recent_viewers_subq = db.session.query(PotentialFriendView.user_id).filter(
+        PotentialFriendView.viewer_id == current_user.id,
+        PotentialFriendView.timestamp >= cutoff
+    ).subquery()
+
+    # 🔒 Исключим: самого себя, друзей, входящие/исходящие заявки, подписки
+    friend_ids = get_friend_ids(current_user.id)
+
+    incoming = db.session.query(FriendRequest.sender_id).filter_by(
+        receiver_id=current_user.id
+    ).subquery()
+
+    outgoing = db.session.query(FriendRequest.receiver_id).filter_by(
+        sender_id=current_user.id
+    ).subquery()
+
+    subscribers = db.session.query(Subscriber.owner_id).filter_by(
+        subscriber_id=current_user.id
+    ).subquery()
+
+    # 👥 Выборка возможных друзей
+    users = User.query.filter(
+        User.id.in_(recent_viewers_subq),
+        User.id != current_user.id,
+        ~User.id.in_(friend_ids),
+        ~User.id.in_(incoming),
+        ~User.id.in_(outgoing),
+        ~User.id.in_(subscribers)
+    ).all()
+
+    return render_template(
+        'partials/possible_friends.html',
+        users=users,
+        cleanup_time=cleanup_time
     )
 
 @app.route('/send_friend_request/<int:user_id>', methods=['POST'])
@@ -798,6 +871,7 @@ def handle_connect():
 def on_join(data):
     room = data.get('room')
     join_room(room)
+    print(f"🔌 Пользователь присоединился к комнате: {room}")
 
 @app.route('/remove_friend/<int:user_id>', methods=['POST'])
 @login_required
@@ -861,6 +935,19 @@ def subscribe(user_id):
 
     return redirect(url_for('friends'))
 
+@app.route("/cleanup_potential_friends", methods=["POST"])
+@login_required
+def cleanup_potential_friends():
+    minutes = int(request.form.get("cleanup_time", 10))
+    threshold = datetime.utcnow() - timedelta(minutes=minutes)
+
+    # Удаляем старые записи только для текущего пользователя
+    PotentialFriendView.query.filter(
+        PotentialFriendView.viewer_id == current_user.id,
+        PotentialFriendView.timestamp < threshold
+    ).delete()
+    db.session.commit()
+    return '', 204  # Успешно, без контента
 
 @app.route('/leave_in_subscribers/<int:user_id>', methods=['POST'])
 @login_required
@@ -885,4 +972,4 @@ def debug_friends():
     return output
 
 if __name__ == '__main__':
-    socketio.run(app, debug=True)
+    socketio.run(app, host='0.0.0.0', port=5000)

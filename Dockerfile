@@ -1,20 +1,18 @@
-# Используем официальный Python-образ
+# Используем официальный образ Python
 FROM python:3.11-slim
 
-# Устанавливаем рабочую директорию внутри контейнера
+# Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Копируем зависимости
-COPY requirements.txt .
-
 # Устанавливаем зависимости
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Копируем весь проект внутрь контейнера
+# Копируем всё приложение
 COPY . .
 
-# Указываем переменные окружения
+# Переменные окружения
 ENV PYTHONUNBUFFERED=1
 
-# Команда по умолчанию (указана также в docker-compose.yml, но на всякий случай)
-CMD ["flask", "run", "--host=0.0.0.0", "--port=5000"]
+# Запуск через Gunicorn с Eventlet
+CMD ["gunicorn", "--worker-class", "eventlet", "-w", "1", "-b", "0.0.0.0:5000", "app:app"]

@@ -4,6 +4,32 @@
     <meta charset="UTF-8">
     <title>{% block title %}Соцсеть{% endblock %}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script>
+        window.socket = io(); // глобально доступная переменная socket
+        // Инициализируем сокет один раз
+        // const socket = io(); - это уже сделано в base.html 
+        socket.emit("join", { room: "user_{{ current_user.id }}" });
+
+        // Слушаем событие принятия в друзья
+        socket.on('friend_accepted', function(data) {
+            console.log("Новый друг:", data);
+
+            const requestEl = document.querySelector(`[data-request-id="${data.request_id}"]`);
+            if (requestEl) requestEl.remove();
+
+            const friendsList = document.getElementById('friends-list');
+            if (friendsList) {
+                const div = document.createElement('div');
+                div.style.marginBottom = '20px';
+                div.innerHTML = `
+                    <img src="${data.friend_avatar}" width="60" style="border-radius: 50%; margin-right: 15px;">
+                    <strong><a href="/profile/${data.friend_id}">${data.friend_username}</a></strong>
+                `;
+                friendsList.appendChild(div);
+            }
+        });
+    </script>
 </head>
 <body>
 <div class="container">
@@ -45,35 +71,6 @@
         fetch('/update_activity', {method: 'POST'});
     }, 10000);
 </script>
-
-<script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
-<script>
-    const socket = io(); // одна инициализация
-
-    // Слушаем событие принятия в друзья
-    socket.on('friend_accepted', function(data) {
-        console.log("Новый друг:", data);
-
-        // Удаляем заявку
-        const requestEl = document.querySelector(`[data-request-id="${data.request_id}"]`);
-        if (requestEl) {
-            requestEl.remove(); // Удаляем заявку из DOM
-        }
-
-        // Добавляем в список друзей
-        const friendsList = document.getElementById('friends-list');
-        if (friendsList) {
-            const div = document.createElement('div');
-            div.style.marginBottom = '20px';
-            div.innerHTML = `
-                <img src="${data.friend_avatar}" width="60" style="border-radius: 50%; margin-right: 15px;">
-                <strong><a href="/profile/${data.friend_id}">${data.friend_username}</a></strong>
-            `;
-            friendsList.appendChild(div);
-        }
-    });
-</script>
-
 
 </body>
 </html>
