@@ -366,9 +366,18 @@ document.addEventListener("DOMContentLoaded", function () {
         }).then(response => {
             if (!response.ok) {
                 console.error("Ошибка при очистке возможных друзей");
+            } else {
+                // 🔄 Обновляем HTML после успешной очистки
+                fetch("/friends_partial")
+                  .then(res => res.text())
+                  .then(html => {
+                      const container = document.getElementById("possible-friends-list");
+                      if (container) container.innerHTML = html;
+                  });
             }
         });
     }
+
 
     // Запуск сразу при загрузке
     cleanupPotentialFriends();
