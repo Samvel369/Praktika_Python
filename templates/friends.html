@@ -382,10 +382,30 @@ document.addEventListener("DOMContentLoaded", function () {
     // Запуск сразу при загрузке
     cleanupPotentialFriends();
 
-    // И повторять каждые 30 сек
-    setInterval(cleanupPotentialFriends, 30000);
+    // И повторять каждые 1 сек
+    setInterval(cleanupPotentialFriends, 1000);
 });
 </script>
 
+<script>
+// ⏱️ Удаление просроченных возможных друзей
+setInterval(() => {
+    const now = Date.now();
+    const lifespan = CLEANUP_TIME_MINUTES * 60 * 1000;
+
+    document.querySelectorAll(".possible-friend").forEach(el => {
+        const appearedAt = parseInt(el.dataset.appearedAt);
+        if (!appearedAt) return;
+
+        if ((now - appearedAt) >= lifespan) {
+            el.remove(); // Удаляем с экрана
+        }
+    });
+}, 10000); // Проверка каждые 10 сек
+</script>
+
+<script>
+  const CLEANUP_TIME_MINUTES = {{ cleanup_time }};
+</script>
 
 {% endblock %}

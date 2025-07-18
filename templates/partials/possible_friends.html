@@ -1,6 +1,6 @@
 {% if users %}
   {% for user in users %}
-    <div data-user-id="{{ user.id }}" style="display: flex; align-items: center; margin-bottom: 20px;">
+    <div class="possible-friend" data-user-id="{{ user.id }}" data-appeared-at="{{ user.timestamp_ms }}" style="display: flex; align-items: center; margin-bottom: 20px;">
       <img src="{{ user.avatar_url }}" alt="avatar"
            style="width: 60px; height: 60px; object-fit: cover; border-radius: 50%; margin-right: 15px;">
       <div style="flex-grow: 1;">

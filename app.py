@@ -684,13 +684,12 @@ def friends_partial():
     cleanup_time = session.get('cleanup_time', 10)
     cutoff = datetime.utcnow() - timedelta(minutes=cleanup_time)
 
-    # 🔎 Найдём user_id всех, кто отмечался на действиях текущего пользователя
-    recent_viewers_subq = db.session.query(PotentialFriendView.user_id).filter(
+    # 🔎 Потенциальные друзья (не фильтруем здесь — сделаем позже)
+    potential_views = db.session.query(PotentialFriendView).filter(
         PotentialFriendView.viewer_id == current_user.id,
         PotentialFriendView.timestamp >= cutoff
-    ).subquery()
+    ).all()
 
-    # 🔒 Исключим: самого себя, друзей, входящие/исходящие заявки, подписки
     friend_ids = get_friend_ids(current_user.id)
 
     incoming = db.session.query(FriendRequest.sender_id).filter_by(
@@ -705,15 +704,19 @@ def friends_partial():
         subscriber_id=current_user.id
     ).subquery()
 
-    # 👥 Выборка возможных друзей
-    users = User.query.filter(
-        User.id.in_(recent_viewers_subq),
-        User.id != current_user.id,
-        ~User.id.in_(friend_ids),
-        ~User.id.in_(incoming),
-        ~User.id.in_(outgoing),
-        ~User.id.in_(subscribers)
-    ).all()
+    # 👥 Отфильтровываем подходящих пользователей из potential_views
+    users = []
+    for view in potential_views:
+        u = view.user
+        if (
+            u.id != current_user.id and
+            u.id not in friend_ids and
+            u.id not in [row[0] for row in db.session.query(incoming).all()] and
+            u.id not in [row[0] for row in db.session.query(outgoing).all()] and
+            u.id not in [row[0] for row in db.session.query(subscribers).all()]
+        ):
+            u.timestamp_ms = int(view.timestamp.timestamp() * 1000)
+            users.append(u)
 
     return render_template(
         'partials/possible_friends.html',
