@@ -1,0 +1,22 @@
+{% if users %}
+  {% for user in users %}
+    <div class="possible-friend" data-user-id="{{ user.id }}" data-appeared-at="{{ user.timestamp_ms }}" style="display: flex; align-items: center; margin-bottom: 20px;">
+      <img src="{{ user.avatar_url }}" alt="avatar"
+           style="width: 60px; height: 60px; object-fit: cover; border-radius: 50%; margin-right: 15px;">
+      <div style="flex-grow: 1;">
+        <a href="{{ url_for('profile_bp.view_profile', user_id=user.id) }}">
+          <strong>{{ user.username }}</strong>
+        </a><br>
+        <a href="{{ url_for('profile_bp.view_profile', user_id=user.id) }}">Перейти в профиль</a>
+      </div>
+      <form method="post" action="{{ url_for('friends_bp.send_friend_request', user_id=user.id) }}" style="margin-right: 5px;">
+        <button type="submit">Добавить в друзья</button>
+      </form>
+      <form method="post" action="{{ url_for('friends_bp.subscribe', user_id=user.id) }}">
+        <button type="submit">Подписаться</button>
+      </form>
+    </div>
+  {% endfor %}
+{% else %}
+  <p>Нет возможных друзей.</p>
+{% endif %}

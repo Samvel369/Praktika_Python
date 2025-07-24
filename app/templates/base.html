@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>{% block title %}Соцсеть{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script>
+        window.socket = io(); // глобально доступная переменная socket
+        // Инициализируем сокет один раз
+        // const socket = io(); - это уже сделано в base.html 
+        socket.emit("join", { room: "user_{{ current_user.id }}" });
+
+        // Слушаем событие принятия в друзья
+        socket.on('friend_accepted', function(data) {
+            console.log("Новый друг:", data);
+
+            const requestEl = document.querySelector(`[data-request-id="${data.request_id}"]`);
+            if (requestEl) requestEl.remove();
+
+            const friendsList = document.getElementById('friends-list');
+            if (friendsList) {
+                const div = document.createElement('div');
+                div.style.marginBottom = '20px';
+                div.innerHTML = `
+                    <img src="${data.friend_avatar}" width="60" style="border-radius: 50%; margin-right: 15px;">
+                    <strong><a href="/profile/${data.friend_id}">${data.friend_username}</a></strong>
+                `;
+                friendsList.appendChild(div);
+            }
+        });
+    </script>
+</head>
+<body>
+<div class="container">
+    <div class="sidebar">
+        {% if current_user.is_authenticated %}
+            <div class="user-info" style="display: flex; align-items: center; gap: 8px; padding: 10px;">
+            <img src="{{ url_for('static', filename='uploads/' + current_user.avatar_url.split('/')[-1]) }}"
+                alt="Аватар"
+                style="width: 45px; height: 45px; border-radius: 50%;">
+            <span><strong>{{ current_user.username }}</strong></span>
+            </div>
+            {% endif %}
+        <h3>Меню</h3>
+        <ul>
+            {% if current_user.is_authenticated %}
+                <li><a href="{{ url_for('main_bp.home') }}">Главная</a></li>
+                <li><a href="{{ url_for('profile_bp.profile') }}">Профиль</a></li>
+                <li><a href="{{ url_for('friends_bp.friends') }}">Друзья</a></li>
+                <li><a href="{{ url_for('my_actions_bp.my_actions') }}">Мои действия</a></li>
+                <li><a href="{{ url_for('world_bp.world') }}">Наш мир</a></li>
+                <li><a href="{{ url_for('auth_bp.logout') }}">Выход</a></li>
+            {% else %}
+                <li><a href="{{ url_for('main_bp.home') }}">Главная</a></li>
+                <li><a href="{{ url_for('auth_bp.login') }}">Вход</a></li>
+                <li><a href="{{ url_for('auth_bp.register') }}">Регистрация</a></li>
+            {% endif %}
+        </ul>
+    </div>
+
+    <div class="content">
+        {% block content %}{% endblock %}
+    </div>
+
+    <div class="sidebar-right">
+        <p><strong>Нас уже:</strong> {{ total_users }}</p>
+        <p><strong>Онлайн:</strong> {{ online_users }}</p>
+    </div>
+</div>
+
+<script>
+    setInterval(() => {
+        fetch('/update_activity', {method: 'POST'});
+    }, 10000);
+</script>
+
+</body>
+</html>
+
+{% with messages = get_flashed_messages() %}
+  {% if messages %}
+    <div id="flash-messages" style="position: fixed; top: 20px; right: 20px; background: #44c767; color: white; padding: 10px; border-radius: 8px;">
+      {% for message in messages %}
+        {{ message }}
+      {% endfor %}
+    </div>
+    <script>
+      setTimeout(() => {
+        const msg = document.getElementById('flash-messages');
+        if (msg) msg.style.display = 'none';
+      }, 3000);
+    </script>
+  {% endif %}
+{% endwith %}
