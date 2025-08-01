@@ -42,9 +42,11 @@ def login():
 
         if user and check_password_hash(user.password, password):
             login_user(user)
-            return redirect(url_for('main_bp.main'))  # если main в main_bp
+            return redirect(url_for('main_bp.main'))
         else:
-            return 'Неверный логин или пароль'
+            flash('Неверный логин или пароль', 'error')  # Добавляем flash
+            return redirect(url_for('auth_bp.login'))     # Перенаправление назад на форму
+
     return render_template('login.html')
 
 

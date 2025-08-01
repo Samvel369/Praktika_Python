@@ -25,6 +25,7 @@
 <h3>Черновики</h3>
 {% if drafts %}
     {% for action in drafts %}a
+        <div class="action-card draft">
             <p><a href="{{ url_for('actions_bp.action_card', action_id=action.id) }}">{{ action.text }}</a></p>
             <form method="POST" style="display:inline;">
                 <input type="hidden" name="delete_id" value="{{ action.id }}">
