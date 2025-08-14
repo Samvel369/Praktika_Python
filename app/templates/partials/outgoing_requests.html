@@ -1,0 +1,17 @@
+{% if outgoing_requests %}
+  {% for req in outgoing_requests %}
+    <div data-request-id="{{ req.id }}" style="display:flex;align-items:center;margin-bottom:20px;">
+      <img src="{{ req.receiver.avatar_url }}" alt="avatar"
+           style="width:60px;height:60px;object-fit:cover;border-radius:50%;margin-right:15px;">
+      <div style="flex-grow:1;">
+        <strong><a href="{{ url_for('profile_bp.view_profile', user_id=req.receiver.id) }}">{{ req.receiver.username }}</a></strong><br>
+        <a href="{{ url_for('profile_bp.view_profile', user_id=req.receiver.id) }}">Перейти в профиль</a>
+      </div>
+      <form method="post" action="{{ url_for('friends_bp.cancel_friend_request', request_id=req.id) }}">
+        <button type="submit">Отменить заявку</button>
+      </form>
+    </div>
+  {% endfor %}
+{% else %}
+  <p>Нет исходящих заявок.</p>
+{% endif %}

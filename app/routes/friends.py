@@ -8,6 +8,15 @@ from flask_socketio import join_room
 
 friends_bp = Blueprint("friends_bp", __name__)
 
+def are_friends(a: int, b: int) -> bool:
+    return FriendRequest.query.filter(
+        FriendRequest.status == 'accepted',
+        or_(
+            and_(FriendRequest.sender_id == a, FriendRequest.receiver_id == b),
+            and_(FriendRequest.sender_id == b, FriendRequest.receiver_id == a),
+        )
+    ).first() is not None
+
 def get_possible_friends(user):
     # Все пользователи, кроме себя
     users = User.query.filter(User.id != user.id).all()
@@ -52,6 +61,41 @@ def get_friend_ids(user_id):
             friend_ids.add(fr.receiver_id)
 
     return friend_ids
+
+def _collect_friends_page_data(user_id):
+    incoming = (FriendRequest.query
+                .filter_by(receiver_id=user_id, status='pending')
+                .order_by(FriendRequest.id.desc())
+                .all())
+
+    outgoing = (FriendRequest.query
+                .filter_by(sender_id=user_id, status='pending')
+                .order_by(FriendRequest.id.desc())
+                .all())
+
+    # Друзья = accepted заявки в обе стороны
+    accepted = (FriendRequest.query
+                .filter(FriendRequest.status == 'accepted',
+                        or_(and_(FriendRequest.sender_id == user_id),
+                            and_(FriendRequest.receiver_id == user_id)))
+                .all())
+    friend_ids = []
+    for fr in accepted:
+        other = fr.receiver_id if fr.sender_id == user_id else fr.sender_id
+        friend_ids.append(other)
+    friends = User.query.filter(User.id.in_(friend_ids)).all() if friend_ids else []
+
+    subscribers = (User.query
+                   .join(Subscriber, Subscriber.subscriber_id == User.id)
+                   .filter(Subscriber.owner_id == user_id)
+                   .all())
+
+    subscriptions = (User.query
+                     .join(Subscriber, Subscriber.owner_id == User.id)
+                     .filter(Subscriber.subscriber_id == user_id)
+                     .all())
+
+    return incoming, outgoing, friends, subscribers, subscriptions
 
 
 @friends_bp.route("/friends", methods=["GET", "POST"])
@@ -142,43 +186,73 @@ def friends():
 @friends_bp.route('/friends_partial')
 @login_required
 def friends_partial():
+    user_id = current_user.id
     cleanup_time = session.get('cleanup_time', 10)
     cutoff = datetime.utcnow() - timedelta(minutes=cleanup_time)
 
-    # 🔎 Потенциальные друзья (не фильтруем здесь — сделаем позже)
-    potential_views = db.session.query(PotentialFriendView).filter(
-        PotentialFriendView.viewer_id == current_user.id,
-        PotentialFriendView.timestamp >= cutoff
-    ).all()
+    # --- accepted (друзья) ---
+    accepted_pairs = (
+        db.session.query(FriendRequest.sender_id, FriendRequest.receiver_id)
+        .filter(
+            FriendRequest.status == 'accepted',
+            or_(FriendRequest.sender_id == user_id,
+                FriendRequest.receiver_id == user_id)
+        ).all()
+    )
+    friend_ids = {
+        (sid if rid == user_id else rid)
+        for sid, rid in accepted_pairs
+    }
 
-    friend_ids = get_friend_ids(current_user.id)
+    # --- pending входящие/исходящие ---
+    incoming_senders = {
+        sid for (sid,) in db.session.query(FriendRequest.sender_id)
+        .filter(FriendRequest.receiver_id == user_id,
+                FriendRequest.status == 'pending')
+        .all()
+    }
+    outgoing_receivers = {
+        rid for (rid,) in db.session.query(FriendRequest.receiver_id)
+        .filter(FriendRequest.sender_id == user_id,
+                FriendRequest.status == 'pending')
+        .all()
+    }
 
-    incoming = db.session.query(FriendRequest.sender_id).filter_by(
-        receiver_id=current_user.id
-    ).subquery()
+    # --- твои подписчики (те, кто на тебя подписан) ---
+    subscriber_ids = {
+        sid for (sid,) in db.session.query(Subscriber.subscriber_id)
+        .filter(Subscriber.owner_id == user_id)
+        .all()
+    }
 
-    outgoing = db.session.query(FriendRequest.receiver_id).filter_by(
-        sender_id=current_user.id
-    ).subquery()
+    # --- кандидаты из PotentialFriendView (join сразу на User) ---
+    candidates = (
+        db.session.query(User, PotentialFriendView.timestamp)
+        .join(PotentialFriendView, PotentialFriendView.user_id == User.id)
+        .filter(
+            PotentialFriendView.viewer_id == user_id,
+            PotentialFriendView.timestamp >= cutoff
+        )
+        .all()
+    )
 
-    subscribers = db.session.query(Subscriber.owner_id).filter_by(
-        subscriber_id=current_user.id
-    ).subquery()
-
-    # 👥 Отфильтровываем подходящих пользователей из potential_views
     users = []
-    for view in potential_views:
-        u = view.user
-        if (
-            u.id != current_user.id and
-            u.id not in friend_ids and
-            u.id not in [row[0] for row in db.session.query(incoming).all()] and
-            u.id not in [row[0] for row in db.session.query(outgoing).all()] and
-            u.id not in [row[0] for row in db.session.query(subscribers).all()]
-        ):
-            u.timestamp_ms = int(view.timestamp.timestamp() * 1000)
-            users.append(u)
-            
+    for u, ts in candidates:
+        if u.id == user_id:              # не ты сам
+            continue
+        if u.id in friend_ids:           # уже друзья
+            continue
+        if u.id in incoming_senders:     # у тебя входящая от него
+            continue
+        if u.id in outgoing_receivers:   # у тебя исходящая к нему
+            continue
+        if u.id in subscriber_ids:       # он уже подписчик
+            continue
+
+        # для фронта: метка появления
+        u.timestamp_ms = int(ts.timestamp() * 1000)
+        users.append(u)
+
     return render_template(
         'partials/possible_friends.html',
         users=users,
@@ -189,168 +263,167 @@ def friends_partial():
 @friends_bp.route('/send_friend_request/<int:user_id>', methods=['POST'])
 @login_required
 def send_friend_request(user_id):
-    existing = FriendRequest.query.filter_by(sender_id=current_user.id, receiver_id=user_id).first()
-    if existing:
-        flash("Заявка уже отправлена.")
-        return redirect(url_for('friends'))
+    sender_id = current_user.id
+    receiver_id = user_id
+    if sender_id == receiver_id:
+        return jsonify(ok=False, message='Нельзя добавить в друзья самого себя'), 400
 
-    # Создаём новую заявку
-    new_request = FriendRequest(
-        sender_id=current_user.id,
-        receiver_id=user_id,
-        status='pending'
-    )
-    db.session.add(new_request)
-
-    # 🧹 Удаляем из подписчиков, если такой есть
-    subscriber = Subscriber.query.filter_by(
-        owner_id=current_user.id,
-        subscriber_id=user_id
+    # Уже друзья? (есть accepted в любом направлении)
+    accepted = FriendRequest.query.filter(
+        FriendRequest.status == 'accepted',
+        or_(
+            and_(FriendRequest.sender_id == sender_id, FriendRequest.receiver_id == receiver_id),
+            and_(FriendRequest.sender_id == receiver_id, FriendRequest.receiver_id == sender_id),
+        )
     ).first()
-    if subscriber:
-        db.session.delete(subscriber)
+    if accepted:
+        return jsonify(ok=True, message='Вы уже друзья')
+
+    # Уже есть PENDING в любом направлении?
+    pending = FriendRequest.query.filter(
+        FriendRequest.status == 'pending',
+        or_(
+            and_(FriendRequest.sender_id == sender_id, FriendRequest.receiver_id == receiver_id),
+            and_(FriendRequest.sender_id == receiver_id, FriendRequest.receiver_id == sender_id),
+        )
+    ).first()
+    if pending:
+        return jsonify(ok=True, message='Заявка уже существует', data={'request_id': pending.id})
+
+    # Создаём PENDING
+    fr = FriendRequest(sender_id=sender_id, receiver_id=receiver_id, status='pending')
+    db.session.add(fr)
+
+    # Уберём «возможного друга» из списка отправителя — он уже в процессе
+    PotentialFriendView.query.filter_by(viewer_id=sender_id, user_id=receiver_id).delete(synchronize_session=False)
 
     db.session.commit()
 
-    # Уведомляем через Socket.IO
-    data = {
-        'request_id': new_request.id,
-        'sender_id': current_user.id,
+    # Уведомление получателю
+    socketio.emit('friend_request_sent', {
+        'request_id': fr.id,
+        'sender_id': sender_id,
         'sender_username': current_user.username,
-        'sender_avatar': current_user.avatar_url
-    }
-    socketio.emit('friend_request_sent', data, to=f"user_{user_id}")
+        'sender_avatar': current_user.avatar_url,
+    }, to=f'user_{receiver_id}')
 
-    return redirect(url_for('friends_bp.friends'))
+    return jsonify(ok=True, message='Заявка отправлена', data={'request_id': fr.id})
 
 
-@friends_bp.route("/cancel_friend_request/<int:request_id>", methods=["POST"])
+@friends_bp.route('/cancel_friend_request/<int:request_id>', methods=['POST'])
 @login_required
 def cancel_friend_request(request_id):
-    req = FriendRequest.query.get_or_404(request_id)
+    fr = FriendRequest.query.get_or_404(request_id)
+    me = current_user.id
+    if me not in (fr.sender_id, fr.receiver_id):
+        return abort(403)
 
-    # Проверка: только отправитель или получатель может отменить
-    if req.sender_id != current_user.id and req.receiver_id != current_user.id:
-        abort(403)
+    # сохраняем id заранее (после delete fr станет detached)
+    sender_id, receiver_id = fr.sender_id, fr.receiver_id
 
-    # Флаг подписки
-    subscribe_flag = request.form.get("subscribe") == "true"
-
-    if subscribe_flag:
-        # Кто кого подписывает:
-        # current_user — это получатель заявки (оставляющий в подписчиках)
-        # req.sender_id — это отправитель заявки
-        subscriber_id = req.sender_id
-        owner_id = current_user.id
-
-        existing = Subscriber.query.filter_by(
-            subscriber_id=subscriber_id,
-            owner_id=owner_id
+    # если получатель отклоняет и просит «оставить в подписчиках»
+    subscribe_flag = request.form.get('subscribe') in ('1', 'true', 'True', 'on')
+    if subscribe_flag and me == receiver_id:
+        # подписчик = отправитель, владелец = получатель
+        exists = Subscriber.query.filter_by(
+            subscriber_id=sender_id, owner_id=receiver_id
         ).first()
-
-        if not existing:
-            new_sub = Subscriber(subscriber_id=subscriber_id, owner_id=owner_id)
-            db.session.add(new_sub)
+        if not exists:
+            db.session.add(Subscriber(
+                subscriber_id=sender_id,
+                owner_id=receiver_id
+            ))
             db.session.commit()
 
-            # Реалтайм-сообщение владельцу (current_user)
-            subscriber_user = User.query.get(subscriber_id)
-            subscriber_data = {
-                'subscriber_id': subscriber_user.id,
-                'subscriber_username': subscriber_user.username,
-                'subscriber_avatar': subscriber_user.avatar_url
-            }
-            socketio.emit("new_subscriber", subscriber_data, to=f"user_{owner_id}")
+        # один раз получаем данные пользователей для событий
+        sender   = User.query.get(sender_id)
+        receiver = User.query.get(receiver_id)
 
-            # Реалтайм-сообщение подписчику
-            socketio.emit("subscribed_to", {
-                'user_id': owner_id,
-                'username': current_user.username,
-                'avatar': current_user.avatar_url
-            }, to=f"user_{subscriber_id}")
+        # владельцу: у него новый подписчик
+        socketio.emit('new_subscriber', {
+            'subscriber_id': sender_id,
+            'subscriber_username': sender.username,
+            'subscriber_avatar': sender.avatar_url,
+        }, to=f'user_{receiver_id}')
 
-    # Удаляем заявку
-    db.session.delete(req)
+        # подписчику: он теперь подписан на receiver
+        socketio.emit('subscribed_to', {
+            'user_id': receiver_id,
+            'username': receiver.username,
+            'avatar': receiver.avatar_url,
+        }, to=f'user_{sender_id}')
+
+    # удаляем заявку
+    db.session.delete(fr)
     db.session.commit()
 
-    # Уведомим обе стороны
-    socketio.emit('friend_request_cancelled', {
-        'request_id': request_id,
-        'user_id': current_user.id,
-    }, room=f"user_{req.sender_id}")
+    # обеим сторонам — чтобы исчезли входящая/исходящая без F5
+    socketio.emit('friend_request_cancelled', {'request_id': request_id}, to=f'user_{sender_id}')
+    socketio.emit('friend_request_cancelled', {'request_id': request_id}, to=f'user_{receiver_id}')
 
-    socketio.emit('friend_request_cancelled', {
-        'request_id': request_id,
-        'user_id': current_user.id,
-    }, room=f"user_{req.receiver_id}")
+    return jsonify(ok=True, message='Заявка отменена')
 
-    return redirect(url_for("friends_bp.friends"))
-
-# При обработке приёма заявки
 
 
 @friends_bp.route('/accept_friend_request/<int:request_id>', methods=['POST'])
 @login_required
 def accept_friend_request(request_id):
-    friend_request = FriendRequest.query.get_or_404(request_id)
+    fr = FriendRequest.query.get_or_404(request_id)
+    if fr.receiver_id != current_user.id:
+        return abort(403)
+    if fr.status != 'pending':
+        return jsonify(ok=True, message='Уже обработано')
 
-    # Только получатель может принять
-    if friend_request.receiver_id != current_user.id:
-        flash("Вы не можете принять эту заявку.")
-        return redirect(url_for('friends'))
-
-    friend_request.status = 'accepted'
-
-    # Удаляем подписку, если sender был подписчиком receiver
-    subscription = Subscriber.query.filter_by(
-        owner_id=friend_request.receiver_id,
-        subscriber_id=friend_request.sender_id
-    ).first()
-
-    if subscription:
-        db.session.delete(subscription)
-
-        # Уведомим sender'а, что его подписка исчезла
-        socketio.emit('subscriber_removed', {
-            'subscriber_id': friend_request.sender_id
-        }, to=f"user_{friend_request.receiver_id}")
-
+    fr.status = 'accepted'
     db.session.commit()
 
-    # Отправка данных в обе стороны
-    data = {
-        'request_id': request_id,
-        'friend_id': current_user.id,
-        'friend_username': current_user.username,
-        'friend_avatar': current_user.avatar_url
-    }
+    # Удаляем подписки в обе стороны — дружба «перекрывает» подписку
+    Subscriber.query.filter(
+        or_(
+            and_(Subscriber.owner_id == fr.sender_id,  Subscriber.subscriber_id == fr.receiver_id),
+            and_(Subscriber.owner_id == fr.receiver_id, Subscriber.subscriber_id == fr.sender_id),
+        )
+    ).delete(synchronize_session=False)
+    db.session.commit()
 
-    socketio.emit('friend_accepted', data, to=f"user_{friend_request.sender_id}")
-    socketio.emit('friend_accepted', data, to=f"user_{friend_request.receiver_id}")
+    # Уведомим обе стороны: обновятся «Друзья/Исходящие»
+    socketio.emit('friend_accepted', {'request_id': fr.id}, to=f'user_{fr.sender_id}')
+    socketio.emit('friend_accepted', {'request_id': fr.id}, to=f'user_{fr.receiver_id}')
 
-    return redirect(url_for('friends_bp.friends'))
+    # ✨ Дополнительно: освежим подписочные секции у обеих сторон
+    socketio.emit('subscribers_refresh', {}, to=f'user_{fr.sender_id}')
+    socketio.emit('subscribers_refresh', {}, to=f'user_{fr.receiver_id}')
+
+    # Уберём «возможных друзей» в обе стороны (чтобы карточка исчезла)
+    PotentialFriendView.query.filter(
+        or_(
+            and_(PotentialFriendView.viewer_id == fr.sender_id,  PotentialFriendView.user_id == fr.receiver_id),
+            and_(PotentialFriendView.viewer_id == fr.receiver_id, PotentialFriendView.user_id == fr.sender_id),
+        )
+    ).delete(synchronize_session=False)
+    db.session.commit()
+
+    return jsonify(ok=True, message='Заявка принята')
 
 
 @friends_bp.route('/remove_friend/<int:user_id>', methods=['POST'])
 @login_required
 def remove_friend(user_id):
-    req1 = FriendRequest.query.filter_by(sender_id=current_user.id, receiver_id=user_id, status='accepted').first()
-    req2 = FriendRequest.query.filter_by(sender_id=user_id, receiver_id=current_user.id, status='accepted').first()
+    me = current_user.id
+    fr = FriendRequest.query.filter(
+        FriendRequest.status == 'accepted',
+        or_(
+            and_(FriendRequest.sender_id == me, FriendRequest.receiver_id == user_id),
+            and_(FriendRequest.sender_id == user_id, FriendRequest.receiver_id == me),
+        )
+    ).first()
+    if fr:
+        db.session.delete(fr)
+        db.session.commit()
+        socketio.emit('friend_removed', {'user_id': me}, to=f'user_{user_id}')
 
-    if req1:
-        db.session.delete(req1)
-    if req2:
-        db.session.delete(req2)
+    return jsonify(ok=True, message='Удалено из друзей')
 
-    db.session.commit()
-    flash('Пользователь удалён из друзей.')
-
-    # Уведомляем другого пользователя в реальном времени
-    socketio.emit('friend_removed', {
-        'user_id': current_user.id
-    }, room=f'user_{user_id}')
-
-    return redirect(url_for('friends_bp.friends'))
 
 
 @friends_bp.route("/remove_possible_friend/<int:user_id>", methods=["POST"])
@@ -366,27 +439,34 @@ def remove_possible_friend(user_id):
 @friends_bp.route('/subscribe/<int:user_id>', methods=['POST'])
 @login_required
 def subscribe(user_id):
-    if user_id == current_user.id:
-        abort(400)
+    follower = current_user.id
+    if follower == user_id:
+        return jsonify(ok=False, message='Нельзя подписаться на себя'), 400
 
-    existing = Subscriber.query.filter_by(subscriber_id=current_user.id, owner_id=user_id).first()
-    if existing:
-        flash("Вы уже подписаны.")
-        return redirect(url_for('friends_bp.friends'))
+    exists = Subscriber.query.filter_by(subscriber_id=follower, owner_id=user_id).first()
+    if exists:
+        return jsonify(ok=True, message='Уже подписаны')
 
-    new_sub = Subscriber(subscriber_id=current_user.id, owner_id=user_id)
-    db.session.add(new_sub)
+    if are_friends(follower, user_id):
+        return jsonify(ok=False, message='Вы уже друзья — подписка не нужна'), 400
+
+    db.session.add(Subscriber(subscriber_id=follower, owner_id=user_id))
     db.session.commit()
 
-    data = {
-        'subscriber_id': current_user.id,
+    socketio.emit('new_subscriber', {
+        'subscriber_id': follower,
         'subscriber_username': current_user.username,
         'subscriber_avatar': current_user.avatar_url,
-    }
+    }, to=f'user_{user_id}')
 
-    socketio.emit('new_subscriber', data, to=f"user_{user_id}")
+    socketio.emit('subscribed_to', {
+        'user_id': user_id,
+        'username': User.query.get(user_id).username,
+        'avatar': User.query.get(user_id).avatar_url,
+    }, to=f'user_{current_user.id}')
 
-    return redirect(url_for('friends_bp.friends'))
+    return jsonify(ok=True, message='Подписка оформлена')
+
 
 
 @friends_bp.route("/cleanup_potential_friends", methods=["POST"])
@@ -415,6 +495,36 @@ def leave_in_subscribers(user_id):
         db.session.add(sub)
         db.session.commit()
     return redirect(url_for('friends_bp.friends'))
+
+@friends_bp.route('/friends_partial/incoming')
+@login_required
+def friends_partial_incoming():
+    incoming, *_ = _collect_friends_page_data(current_user.id)
+    return render_template('partials/incoming_requests.html', incoming_requests=incoming)
+
+@friends_bp.route('/friends_partial/outgoing')
+@login_required
+def friends_partial_outgoing():
+    _, outgoing, *_ = _collect_friends_page_data(current_user.id)
+    return render_template('partials/outgoing_requests.html', outgoing_requests=outgoing)
+
+@friends_bp.route('/friends_partial/friends')
+@login_required
+def friends_partial_friends():
+    *_, friends, __, ___ = _collect_friends_page_data(current_user.id)
+    return render_template('partials/friends_list.html', friends=friends)
+
+@friends_bp.route('/friends_partial/subscribers')
+@login_required
+def friends_partial_subscribers():
+    *___, subscribers, ____ = _collect_friends_page_data(current_user.id)
+    return render_template('partials/subscribers.html', subscribers=subscribers)
+
+@friends_bp.route('/friends_partial/subscriptions')
+@login_required
+def friends_partial_subscriptions():
+    *____, subscriptions = _collect_friends_page_data(current_user.id)
+    return render_template('partials/subscriptions.html', subscriptions=subscriptions)
 
 
 @socketio.on('connect')

@@ -1,0 +1,14 @@
+{% if subscribers %}
+  {% for subscriber in subscribers %}
+    <div data-user-id="{{ subscriber.id }}" style="display:flex;align-items:center;margin-bottom:20px;">
+      <img src="{{ subscriber.avatar_url }}" alt="avatar"
+           style="width:60px;height:60px;object-fit:cover;border-radius:50%;margin-right:15px;">
+      <div style="flex-grow:1;">
+        <strong><a href="{{ url_for('profile_bp.view_profile', user_id=subscriber.id) }}">{{ subscriber.username }}</a></strong><br>
+        <a href="{{ url_for('profile_bp.view_profile', user_id=subscriber.id) }}">Перейти в профиль</a>
+      </div>
+    </div>
+  {% endfor %}
+{% else %}
+  <p id="no-subscribers-msg">Нет подписчиков.</p>
+{% endif %}

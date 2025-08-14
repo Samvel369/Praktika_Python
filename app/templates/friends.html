@@ -7,20 +7,19 @@
 <section>
   <h2>Возможные друзья:</h2>
 
-  <form method="post" style="margin-bottom: 10px;">
-    <label for="cleanup_time">Удалять из списка через:</label>
-    <select id="cleanup_time" name="cleanup_time" onchange="this.form.submit()">
-      {% for m in range(1, 61) %}
-        <option value="{{ m }}" {% if m == cleanup_time %}selected{% endif %}>
-          {{ m }} мин
-        </option>
-      {% endfor %}
-    </select>
-  </form>
+    <form method="POST" style="margin: 6px 0;">
+      <label>Удалять из списка через:</label>
+      <select name="cleanup_time" onchange="this.form.submit()">
+        <option value="10" {{ 'selected' if cleanup_time == 10 else '' }}>10 мин</option>
+        <option value="30" {{ 'selected' if cleanup_time == 30 else '' }}>30 мин</option>
+        <option value="60" {{ 'selected' if cleanup_time == 60 else '' }}>1 час</option>
+      </select>
+    </form>
 
-  <div id="possible-friends-list">
-    {% include "partials/possible_friends.html" %}
-  </div>
+    {# ВАЖНО: именно этот id мы обновляем из friends.js #}
+    <div id="possible-friends-list">
+      {% include 'partials/possible_friends.html' %}
+    </div>
 </section>
 
   <hr>
@@ -161,6 +160,19 @@
 </div>
 
 <script src="{{ url_for('static', filename='js/socket.js') }}"></script>
+
+<script>
+  window.FRIENDS_PARTIALS = {
+    possible_friends: "{{ url_for('friends_bp.friends_partial') }}",
+    incoming: "{{ url_for('friends_bp.friends_partial_incoming') }}",
+    outgoing: "{{ url_for('friends_bp.friends_partial_outgoing') }}",
+    friends: "{{ url_for('friends_bp.friends_partial_friends') }}",
+    subscribers: "{{ url_for('friends_bp.friends_partial_subscribers') }}",
+    subscriptions: "{{ url_for('friends_bp.friends_partial_subscriptions') }}"
+  };
+</script>
+
 <script src="{{ url_for('static', filename='js/friends.js') }}"></script>
+
 
 {% endblock %}

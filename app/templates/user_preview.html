@@ -8,12 +8,17 @@
     <p>Email: {{ user.email }}</p>
     <p>О себе: {{ user.about }}</p>
 {% else %}
-    <form method="post" action="{{ url_for('friends_bp.send_friend_request', user_id=user.id) }}">
+    <form method="post"
+            action="{{ url_for('friends_bp.send_friend_request', user_id=user.id) }}"
+            data-ajax="1">
         <button type="submit">Добавить в друзья</button>
     </form>
 {% endif %}
 
 <br>
 <a href="{{ url_for('friends_bp.friends') }}">&larr; Назад</a>
+
+{# ниже, перед закрывающим {% endblock %} или в base.html #}
+<script src="{{ url_for('static', filename='js/profile.js') }}"></script>
 
 {% endblock %}

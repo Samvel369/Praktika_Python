@@ -105,57 +105,57 @@ def get_published_actions():
 @world_bp.route('/mark_action/<int:action_id>', methods=['POST'])
 @login_required
 def mark_action(action_id):
-    user_id = current_user.id
+    marker_id = current_user.id
     now = datetime.utcnow()
     ten_minutes_ago = now - timedelta(minutes=10)
 
-    print(f"✅ [mark_action] Пользователь {user_id} отмечает действие {action_id} в {now}")
+    print(f"✅ [mark_action] Пользователь {marker_id} отмечает действие {action_id} в {now}")
 
-    # Проверка на повторную отметку
-    recent_mark = ActionMark.query.filter_by(user_id=user_id, action_id=action_id) \
-        .filter(ActionMark.timestamp >= ten_minutes_ago).first()
+    # Антиспам: не чаще раза в 10 минут для одного и того же действия
+    recent_mark = (ActionMark.query
+                   .filter_by(user_id=marker_id, action_id=action_id)
+                   .filter(ActionMark.timestamp >= ten_minutes_ago)
+                   .first())
     if recent_mark:
         remaining = 600 - int((now - recent_mark.timestamp).total_seconds())
         print("⏱ Уже была отметка. Ждём:", remaining, "секунд")
         return jsonify({'error': 'wait', 'remaining': remaining})
 
-    # Добавляем новую отметку
+    # Новая отметка
     print("➕ Добавляем новую отметку")
-    new_mark = ActionMark(user_id=user_id, action_id=action_id)
-    db.session.add(new_mark)
+    db.session.add(ActionMark(user_id=marker_id, action_id=action_id))
     db.session.commit()
 
-    # Уведомляем автора
+    # Уведомляем автора + обновляем PotentialFriendView (UPSERT по времени)
     action = Action.query.get(action_id)
-    if action and action.user_id != user_id:
-        print(f"📣 Действие принадлежит пользователю {action.user_id}, проверим potential_friend_view")
+    if action and action.user_id != marker_id:
+        owner_id = action.user_id
+        print(f"📣 Действие принадлежит пользователю {owner_id}, обновим potential_friend_view")
 
-        existing_view = PotentialFriendView.query.filter_by(
-            viewer_id=action.user_id,
-            user_id=user_id
-        ).first()
-
-        if not existing_view:
-            print("🆕 Нет записи — добавим")
-            view = PotentialFriendView(
-                viewer_id=action.user_id,
-                user_id=user_id,
-                timestamp=now
-            )
-            db.session.add(view)
-            db.session.commit()
+        view = (PotentialFriendView.query
+                .filter_by(viewer_id=owner_id, user_id=marker_id)
+                .first())
+        if view:
+            # 🔁 запись есть — ОБНОВЛЯЕМ свежесть
+            view.timestamp = now
+            print("🔁 Обновили timestamp существующей записи")
         else:
-            print("⚠ Запись уже есть, не добавляем")
+            # ➕ записи нет — создаём
+            db.session.add(PotentialFriendView(
+                viewer_id=owner_id,
+                user_id=marker_id,
+                timestamp=now
+            ))
+            print("🆕 Создали новую запись potential_friend_view")
 
-        # Отправим сокет-событие
-        print(f"📤 Отправка socketio-события в комнату user_{action.user_id}")
+        db.session.commit()
+
+        # Сокет-событие для владельца
+        print(f"📤 Отправка socketio-события в комнату user_{owner_id}")
         socketio.emit(
             'update_possible_friends',
-            {
-                'user_id': user_id,
-                'username': current_user.username
-            },
-            to=f'user_{action.user_id}'
+            {'user_id': marker_id, 'username': current_user.username},
+            to=f"user_{owner_id}"
         )
 
     return jsonify({'success': True})

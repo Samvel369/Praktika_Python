@@ -1,75 +1,92 @@
-from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
+from flask import Blueprint, render_template, request, jsonify
 from flask_login import login_required, current_user
 from datetime import datetime, timedelta
-from app.models import db, Action, ActionMark
+from app.models import Action, ActionMark  # <-- добавили ActionMark
 from app.extensions import db
 
 my_actions_bp = Blueprint('my_actions_bp', __name__)
 
+# ---------- Helpers ----------
+def _action_to_dict(a: Action):
+    return {
+        "id": a.id,
+        "text": a.text,
+        "is_published": bool(a.is_published),
+        "is_daily": bool(getattr(a, 'is_daily', False)),
+        "created_at": a.created_at.isoformat() if getattr(a, 'created_at', None) else None,
+        "expires_at": a.expires_at.isoformat() if getattr(a, 'expires_at', None) else None,
+    }
+
+# ---------- Routes ----------
 @my_actions_bp.route('/my_actions', methods=['GET', 'POST'])
 @login_required
 def my_actions():
     user = current_user
 
     if request.method == 'POST':
+        # Создать черновик
         if 'new_action' in request.form:
-            text = request.form.get('new_action')
-            if text:
-                action = Action(user_id=user.id, text=text, is_published=False)
-                db.session.add(action)
-                db.session.commit()
-                flash('Новое действие добавлено!')
+            text = (request.form.get('new_action') or '').strip()
+            if not text:
+                return jsonify({"ok": False, "message": "Введите текст действия"}), 400
 
-        elif 'delete_id' in request.form:
-            action = Action.query.get(int(request.form.get('delete_id')))
-            if action and action.user_id == user.id:
-                ActionMark.query.filter_by(action_id=action.id).delete()
-                db.session.delete(action)
-                db.session.commit()
-                flash('Действие и все отметки удалены!')
+            action = Action(user_id=user.id, text=text, is_published=False)
+            db.session.add(action)
+            db.session.commit()
+            return jsonify({"ok": True, "message": "Действие создано", "data": {"action": _action_to_dict(action)}})
 
-        elif 'publish_id' in request.form:
-            action = Action.query.get(int(request.form.get('publish_id')))
-            if action and action.user_id == user.id:
-                action.is_published = True
-                duration = int(request.form.get('duration', 10))
-                action.expires_at = datetime.utcnow() + timedelta(minutes=duration)
-                db.session.commit()
-                flash('Действие опубликовано! Перейдите в "Наш мир" для просмотра.', 'info')
+        # Удалить действие (и все его отметки)
+        if 'delete_id' in request.form:
+            try:
+                action_id = int(request.form.get('delete_id'))
+            except (TypeError, ValueError):
+                return jsonify({"ok": False, "message": "Некорректный ID"}), 400
 
-        return redirect(url_for('my_actions_bp.my_actions'))
+            action = Action.query.get_or_404(action_id)
+            if action.user_id != user.id:
+                return jsonify({"ok": False, "message": "Нет прав"}), 403
 
-    drafts = Action.query.filter_by(user_id=user.id, is_published=False).order_by(Action.created_at.desc()).all()
-    published = Action.query.filter_by(user_id=user.id, is_published=True).order_by(Action.created_at.desc()).all()
+            # Удаляем связанные отметки, чтобы не упасть на NOT NULL
+            ActionMark.query.filter_by(action_id=action_id).delete(synchronize_session=False)
+            db.session.delete(action)
+            db.session.commit()
+            return jsonify({"ok": True, "message": "Действие удалено", "data": {"id": action_id}})
+
+        # Опубликовать действие (publish_id + duration)
+        if 'publish_id' in request.form:
+            try:
+                action_id = int(request.form.get('publish_id'))
+            except (TypeError, ValueError):
+                return jsonify({"ok": False, "message": "Некорректный ID"}), 400
+
+            duration = (request.form.get('duration') or '').strip()
+            if duration not in {'10', '30', '60'}:
+                return jsonify({"ok": False, "message": "Неверная длительность"}), 400
+
+            action = Action.query.get_or_404(action_id)
+            if action.user_id != user.id:
+                return jsonify({"ok": False, "message": "Нет прав"}), 403
+
+            minutes = int(duration)
+            action.is_published = True
+            action.expires_at = datetime.utcnow() + timedelta(minutes=minutes)
+            db.session.commit()
+
+            return jsonify({"ok": True, "message": "Опубликовано", "data": {"action": _action_to_dict(action)}})
+
+        return jsonify({"ok": False, "message": "Неподдерживаемое действие"}), 400
+
+    # GET: отрисовываем страницу (передаём now для шаблона)
+    drafts = (Action.query
+              .filter_by(user_id=user.id, is_published=False)
+              .order_by(Action.created_at.desc())
+              .all())
+    published = (Action.query
+                 .filter_by(user_id=user.id, is_published=True)
+                 .order_by(Action.created_at.desc())
+                 .all())
 
     return render_template('my_actions.html', drafts=drafts, published=published, now=datetime.utcnow())
-    
-
-@my_actions_bp.route('/publish_action/<int:action_id>', methods=['POST'])
-@login_required
-def publish_action(action_id):
-    user = current_user
-    action = Action.query.get(action_id)
-    if not action or action.user_id != user.id:
-        return jsonify({'error': 'Not allowed'}), 403
-
-    recent_actions = Action.query.filter(
-        Action.user_id == user.id,
-        Action.is_published == True,
-        Action.text.ilike(f"%{action.text}%")
-    ).all()
-
-    now = datetime.utcnow()
-    for a in recent_actions:
-        if a.expires_at and a.expires_at > now:
-            return jsonify({'error': 'Похожее действие уже опубликовано'}), 400
-
-    data = request.get_json()
-    duration_minutes = int(data.get('duration', 10))
-    action.is_published = True
-    action.expires_at = now + timedelta(minutes=duration_minutes)
-    db.session.commit()
-    return jsonify({'success': True, 'id': action.id, 'text': action.text})
 
 
 @my_actions_bp.route("/delete_my_action/<int:action_id>", methods=["POST"])
@@ -77,10 +94,29 @@ def publish_action(action_id):
 def delete_my_action(action_id):
     action = Action.query.get_or_404(action_id)
     if action.user_id != current_user.id:
-        return jsonify({'error': 'Not authorized'}), 403
+        return jsonify({'ok': False, 'message': 'Нет прав'}), 403
 
+    # Удаляем связанные отметки до удаления действия
+    ActionMark.query.filter_by(action_id=action_id).delete(synchronize_session=False)
     db.session.delete(action)
     db.session.commit()
+    return jsonify({"ok": True, "message": "Действие удалено", "data": {"id": action_id}})
 
-    flash("Действие удалено.")
-    return redirect(url_for("my_actions_bp.my_actions"))
+
+@my_actions_bp.route("/publish_action/<int:action_id>", methods=["POST"])
+@login_required
+def publish_action(action_id):
+    action = Action.query.get_or_404(action_id)
+    if action.user_id != current_user.id:
+        return jsonify({'ok': False, 'message': 'Нет прав'}), 403
+
+    duration = (request.form.get('duration') or '').strip()
+    if duration not in {'10', '30', '60'}:
+        return jsonify({"ok": False, "message": "Неверная длительность"}), 400
+
+    minutes = int(duration)
+    action.is_published = True
+    action.expires_at = datetime.utcnow() + timedelta(minutes=minutes)
+    db.session.commit()
+
+    return jsonify({"ok": True, "message": "Опубликовано", "data": {"action": _action_to_dict(action)}})

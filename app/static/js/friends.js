@@ -1,256 +1,156 @@
-document.addEventListener("DOMContentLoaded", () => {
-  document.querySelectorAll(".add-friend-btn").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const userId = btn.dataset.userId;
-      socket.emit("send_friend_request", { user_id: userId });
-    });
-  });
+// === friends.js — единые перерисовки секций без F5 ===
+console.log('friends.js loaded');
 
-  socket.on("friend_list_update", data => {
-    console.log("Обновлён список друзей");
-    // updateFriendList() — если такая функция есть
-  });
-});
+function ok(m){ if (window.showNotification) showNotification(m || 'Готово', 'success'); }
+function err(m){ if (window.showNotification) showNotification(m || 'Ошибка', 'error'); }
 
-//<!-- Основной JavaScript -->
-
-  // --- Инициализация Socket.IO ---
-  socket.on('connect', () => {
-    console.log('✅ Подключено к Socket.IO');
-  });
-
-  // --- Обновление возможных друзей ---
-  socket.on('update_possible_friends', function(data) {
-    console.log("👥 Обновление возможных друзей:", data);
-
-    fetch("/friends_partial")
-      .then(res => res.text())
-      .then(html => {
-        const container = document.getElementById("possible-friends-list");
-        if (container) container.innerHTML = html;
-      });
-
-    // Дополнительно можно динамически вставлять нового пользователя (если нужно):
-    /*
-    const container = document.getElementById("possible-friends-list");
-    if (container) {
-      const newUser = document.createElement("div");
-      newUser.classList.add("friend-box");
-      newUser.innerHTML = `
-          <p><a href="/user/${data.user_id}">${data.username}</a></p>
-          <button onclick="addFriend(${data.user_id})">Добавить в друзья</button>
-          <button onclick="subscribe(${data.user_id})">Подписаться</button>
-      `;
-      container.prepend(newUser);
-    }
-    */
-  });
-
-  // --- Другие события ---
-  socket.on('friend_accepted', function (data) {
-    const requestEl = document.querySelector(`[data-request-id="${data.request_id}"]`);
-    if (requestEl) requestEl.remove();
-
-    const friendsList = document.getElementById('friends-list');
-    if (friendsList) {
-      const div = document.createElement('div');
-      div.innerHTML = `
-        <div style="display: flex; align-items: center; margin-bottom: 20px;">
-          <img src="${data.friend_avatar}" style="width: 60px; height: 60px; border-radius: 50%; margin-right: 15px;">
-          <div style="flex-grow: 1;">
-            <strong><a href="/profile/${data.friend_id}">${data.friend_username}</a></strong><br>
-            <a href="/profile/${data.friend_id}">Перейти в профиль</a>
-          </div>
-          <form method="post" action="/remove_friend/${data.friend_id}">
-            <button type="submit">Удалить из друзей</button>
-          </form>
-        </div>
-      `;
-      friendsList.appendChild(div);
-
-      const noMsg = document.getElementById('no-friends-msg');
-      if (noMsg) noMsg.remove();
-    }
-  });
-
-  socket.on('friend_removed', function(data) {
-    const friendEl = document.querySelector(`#friends-list [data-user-id="${data.user_id}"]`);
-    if (friendEl) friendEl.remove();
-
-    const friendsList = document.getElementById('friends-list');
-    if (friendsList && friendsList.children.length === 0) {
-      const msg = document.createElement('p');
-      msg.id = 'no-friends-msg';
-      msg.textContent = 'Пока нет друзей.';
-      friendsList.appendChild(msg);
-    }
-  });
-
-  socket.on('friend_request_cancelled', function (data) {
-    const requestEl = document.querySelector(`[data-request-id="${data.request_id}"]`);
-    if (requestEl) requestEl.remove();
-  });
-
-  socket.on('new_subscriber', function(data) {
-    const list = document.getElementById('subscribers-list');
-    if (!list) return;
-
-    const noMsg = document.getElementById('no-subscribers-msg');
-    if (noMsg) noMsg.remove();
-
-    const div = document.createElement('div');
-    div.style = "display: flex; align-items: center; margin-bottom: 20px;";
-    div.innerHTML = `
-      <img src="${data.subscriber_avatar}" alt="avatar"
-          style="width: 60px; height: 60px; object-fit: cover; border-radius: 50%; margin-right: 15px;">
-      <div style="flex-grow: 1;">
-        <strong>
-          <a href="/profile/${data.subscriber_id}">
-            ${data.subscriber_username}
-          </a>
-        </strong><br>
-        <a href="/profile/${data.subscriber_id}">Перейти в профиль</a>
-      </div>
-    `;
-    list.appendChild(div);
-  });
-
-  socket.on('friend_request_sent', function (data) {
-    const possible = document.querySelector(`[data-user-id="${data.sender_id}"]`);
-    if (possible) possible.remove();
-
-    const requestsList = document.getElementById('requests-list');
-    if (!requestsList) return;
-
-    const noMsg = document.getElementById('no-requests-msg');
-    if (noMsg) noMsg.remove();
-
-    if (requestsList.querySelector(`[data-request-id="${data.request_id}"]`)) return;
-
-    const div = document.createElement('div');
-    div.setAttribute('data-request-id', data.request_id);
-    div.innerHTML = `
-      <div style="display: flex; align-items: center; margin-bottom: 20px;">
-        <img src="${data.sender_avatar}" style="width: 60px; border-radius: 50%; margin-right: 15px;">
-        <div style="flex-grow: 1;">
-          <strong><a href="/profile/${data.sender_id}">${data.sender_username}</a></strong><br>
-          <a href="/profile/${data.sender_id}">Перейти в профиль</a>
-        </div>
-        <form method="post" action="/accept_friend_request/${data.request_id}" style="margin-right: 5px;">
-          <button type="submit">Принять</button>
-        </form>
-        <form method="post" action="/cancel_friend_request/${data.request_id}">
-          <input type="hidden" name="subscribe" value="true">
-          <button type="submit">Оставить в подписчиках</button>
-        </form>
-      </div>
-    `;
-    requestsList.appendChild(div);
-  });
-
-  socket.on('subscribed_to', function(data) {
-    const list = document.getElementById('subscriptions-list');
-    if (!list) return;
-
-    if (list.querySelector(`[data-user-id="${data.user_id}"]`)) return;
-
-    const noMsg = document.getElementById('no-subscriptions-msg');
-    if (noMsg) noMsg.remove();
-
-    const div = document.createElement('div');
-    div.setAttribute('data-user-id', data.user_id);
-    div.style = "display: flex; align-items: center; margin-bottom: 20px;";
-    div.innerHTML = `
-      <img src="${data.avatar}" alt="avatar"
-          style="width: 60px; height: 60px; object-fit: cover; border-radius: 50%; margin-right: 15px;">
-      <div style="flex-grow: 1;">
-        <strong><a href="/profile/${data.user_id}">${data.username}</a></strong><br>
-        <a href="/profile/${data.user_id}">Перейти в профиль</a>
-      </div>
-    `;
-    list.appendChild(div);
-  });
-
-  function startCleanupDatabaseTimer() {
-    const selectElement = document.getElementById("cleanup_time");
-    if (!selectElement) return;
-
-    const minutes = parseInt(selectElement.value);
-    if (!minutes || minutes <= 0) return;
-
-    // Отправляем POST-запрос на сервер для очистки базы
-    fetch("/cleanup_potential_friends", {
-        method: "POST",
-        headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: `minutes=${minutes}`
-    });
-
-    // Запускаем повтор через N минут
-    setTimeout(startCleanupDatabaseTimer, minutes * 60 * 1000);
+// Ждём, пока socket из socket.js инициализируется
+function whenSocketReady(cb, tries = 0) {
+  const s = window.socket;
+  if (s && (s.connected || s.io)) return cb(s);
+  if (tries < 40) return setTimeout(() => whenSocketReady(cb, tries + 1), 300);
+  console.warn('socket не инициализировался');
 }
 
-// Запускаем первый раз при загрузке
-startCleanupDatabaseTimer();
+// Подтяжка HTML для секции и замена DOM
+function reloadSection(section) {
+  const map = window.FRIENDS_PARTIALS || {};
+  const url = map[section];
+  const elId = {
+    // id контейнеров на странице friends.html
+    possible_friends: 'possible-friends-list',
+    incoming: 'requests-list',
+    outgoing: 'outgoing-requests',
+    friends: 'friends-list',
+    subscribers: 'subscribers-list',
+    subscriptions: 'subscriptions-list',
+  }[section];
 
+  if (!url || !elId) return;
+  fetch(url)
+    .then(r => r.text())
+    .then(html => {
+      const box = document.getElementById(elId);
+      if (box) box.innerHTML = html;
+    })
+    .catch(console.error);
+}
 
-document.addEventListener("DOMContentLoaded", function () {
-    const select = document.getElementById("cleanup_time");
+// ===== SOCKET =====
+if (location.pathname.includes('/friends')) {
+  whenSocketReady((s) => {
+    console.log('friends.js: socket ready (subscribe all)');
 
-    // Сохраняем выбор в сессии
-    select.addEventListener("change", function () {
-        const minutes = select.value;
-        sessionStorage.setItem("cleanup_time", minutes);
+    // Снимаем прошлые подписки, чтобы не плодить обработчики
+    s.off && s.off('update_possible_friends');
+    s.off && s.off('friend_request_sent');
+    s.off && s.off('friend_accepted');
+    s.off && s.off('friend_request_cancelled');
+    s.off && s.off('friend_removed');
+    s.off && s.off('new_subscriber');
+    s.off && s.off('subscribed_to');
+
+    // Возможные друзья — приходят при отметках
+    s.on('update_possible_friends', () => {
+      reloadSection('possible_friends');
     });
 
-    function cleanupPotentialFriends() {
-        const minutes = sessionStorage.getItem("cleanup_time") || select.value;
+    // Поступила заявка (получателю)
+    s.on('friend_request_sent', () => {
+      reloadSection('incoming');
+    });
 
-        fetch("/cleanup_potential_friends", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/x-www-form-urlencoded"
-            },
-            body: "cleanup_time=" + encodeURIComponent(minutes)
-        }).then(response => {
-            if (!response.ok) {
-                console.error("Ошибка при очистке возможных друзей");
-            } else {
-                // 🔄 Обновляем HTML после успешной очистки
-                fetch("/friends_partial")
-                  .then(res => res.text())
-                  .then(html => {
-                      const container = document.getElementById("possible-friends-list");
-                      if (container) container.innerHTML = html;
-                  });
-            }
-        });
+    // Заявка принята — у отправителя улетает из outgoing, появляется в friends
+    s.on('friend_accepted', () => {
+      reloadSection('friends');
+      reloadSection('outgoing');
+    });
+
+    // Заявка отменена/отклонена
+    s.on('friend_request_cancelled', () => {
+      reloadSection('incoming');
+      reloadSection('outgoing');
+    });
+
+    // Удалили из друзей
+    s.on('friend_removed', () => {
+      reloadSection('friends');
+    });
+
+    // На тебя подписались
+    s.on('new_subscriber', () => {
+      reloadSection('subscribers');
+    });
+
+    // Ты на кого-то подписался
+    s.on('subscribed_to', () => {
+      reloadSection('subscriptions');
+    });
+
+    // подписочные связи изменились (удалили/очистили/синхронизировали)
+    s.off && s.off('subscribers_refresh');
+    s.on('subscribers_refresh', () => {
+      reloadSection('subscribers');
+      reloadSection('subscriptions');
+    });
+  });
+}
+
+// ===== ПЕРЕХВАТ ЛОКАЛЬНЫХ ФОРМ (без «белых страниц») =====
+document.addEventListener('submit', async (e) => {
+  const form = e.target;
+  if (!(form instanceof HTMLFormElement)) return;
+  if (!location.pathname.includes('/friends')) return;
+  if ((form.method || '').toUpperCase() !== 'POST') return;
+
+  e.preventDefault();
+
+  // защита от дабл-кликов
+  const submitBtn = form.querySelector('[type="submit"]');
+  if (form.dataset.busy === '1') return;
+  form.dataset.busy = '1';
+  if (submitBtn) submitBtn.disabled = true;
+
+  try {
+    const fd = new FormData(form);
+    const action = form.getAttribute('action') || location.pathname;
+    const res = await fetch(action, { method: 'POST', body: fd });
+    if (!res.ok) throw new Error('Ошибка запроса');
+    ok('Готово');
+
+    // локально догружаем вероятные секции, не ожидая сокета
+    if (action.includes('/send_friend_request')) {
+      reloadSection('outgoing');   // у отправителя появляется исходящая
+      reloadSection('possible_friends'); // и снимается из возможных
+    } else if (action.includes('/accept_friend_request')) {
+      reloadSection('incoming');   // исчезает входящая
+      reloadSection('friends');    // появляется друг
+      reloadSection('possible_friends');
+      reloadSection('subscribers');
+      reloadSection('subscriptions');
+    } else if (action.includes('/cancel_friend_request')) {
+      reloadSection('incoming');
+      reloadSection('outgoing');
+      reloadSection('possible_friends');
+
+      // если это «оставить в подписчиках», обновим локально «Подписан на»
+      if ([...fd.entries()].some(([k, v]) => k === 'subscribe' && String(v) === 'true')) {
+        reloadSection('subscriptions');  // у отправителя — «Подписан на»
+        reloadSection('subscribers');  // у получателя — «Подписчики»
+      }
+    } else if (action.includes('/remove_friend')) {
+      reloadSection('friends');
+      reloadSection('possible_friends');
+    } else if (action.includes('/subscribe')) {
+      reloadSection('subscriptions'); // у подписчика
+      // у владельца придёт сокет new_subscriber → обновит subscribers
+      reloadSection('possible_friends');
     }
-
-
-    // Запуск сразу при загрузке
-    cleanupPotentialFriends();
-
-    // И повторять каждые 1 сек
-    setInterval(cleanupPotentialFriends, 1000);
-});
-
-
-// ⏱️ Удаление просроченных возможных друзей
-setInterval(() => {
-    const now = Date.now();
-    const lifespan = CLEANUP_TIME_MINUTES * 60 * 1000;
-
-    document.querySelectorAll(".possible-friend").forEach(el => {
-        const appearedAt = parseInt(el.dataset.appearedAt);
-        if (!appearedAt) return;
-
-        if ((now - appearedAt) >= lifespan) {
-            el.remove(); // Удаляем с экрана
-        }
-    });
-}, 10000); // Проверка каждые 10 сек
-
-  const CLEANUP_TIME_MINUTES = { cleanup_time };
-
+  } catch (e2) {
+    console.error(e2);
+    err('Ошибка');
+  } finally {
+    form.dataset.busy = '0';
+    if (submitBtn) submitBtn.disabled = false;
+  }
+}, true);

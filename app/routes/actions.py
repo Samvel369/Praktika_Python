@@ -44,51 +44,57 @@ def mark_action(action_id):
 
     print(f"✅ [mark_action] Пользователь {user_id} отмечает действие {action_id} в {now}")
 
-    # Проверка на повторную отметку
-    recent_mark = ActionMark.query.filter_by(user_id=user_id, action_id=action_id) \
-        .filter(ActionMark.timestamp >= ten_minutes_ago).first()
+    # Антиспам: не чаще 1 раза в 10 минут по одному и тому же действию
+    recent_mark = (
+        ActionMark.query
+        .filter_by(user_id=user_id, action_id=action_id)
+        .filter(ActionMark.timestamp >= ten_minutes_ago)
+        .first()
+    )
     if recent_mark:
         remaining = 600 - int((now - recent_mark.timestamp).total_seconds())
         print("⏱ Уже была отметка. Ждём:", remaining, "секунд")
         return jsonify({'error': 'wait', 'remaining': remaining})
 
     # Добавляем новую отметку
-    print("➕ Добавляем новую отметку")
     new_mark = ActionMark(user_id=user_id, action_id=action_id)
     db.session.add(new_mark)
     db.session.commit()
+    print("➕ Добавили новую отметку")
 
-    # Уведомляем автора
+    # Найдём владельца действия и обновим возможных друзей
     action = Action.query.get(action_id)
     if action and action.user_id != user_id:
-        print(f"📣 Действие принадлежит пользователю {action.user_id}, проверим potential_friend_view")
+        owner_id = action.user_id
+        print(f"📣 Действие принадлежит пользователю {owner_id}, обновим potential_friend_view")
 
         existing_view = PotentialFriendView.query.filter_by(
-            viewer_id=action.user_id,
+            viewer_id=owner_id,
             user_id=user_id
         ).first()
 
-        if not existing_view:
-            print("🆕 Нет записи — добавим")
+        if existing_view:
+            # 🔁 запись есть — ОБНОВЛЯЕМ «свежесть»
+            existing_view.timestamp = now
+            print("🔁 Обновили timestamp существующей записи")
+        else:
+            # 🆕 записи нет — СОЗДАЁМ
             view = PotentialFriendView(
-                viewer_id=action.user_id,
+                viewer_id=owner_id,
                 user_id=user_id,
                 timestamp=now
             )
             db.session.add(view)
-            db.session.commit()
-        else:
-            print("⚠ Запись уже есть, не добавляем")
+            print("🆕 Создали новую запись potential_friend_view")
 
-        # Отправим сокет-событие
-        print(f"📤 Отправка socketio-события в комнату user_{action.user_id}")
+        db.session.commit()
+
+        # Сообщим владельцу через Socket.IO (имя события оставляем прежним)
+        print(f"📤 Отправка socketio-события в комнату user_{owner_id}")
         socketio.emit(
             'update_possible_friends',
-            {
-                'user_id': user_id,
-                'username': current_user.username
-            },
-            to=f'user_{action.user_id}'
+            {'user_id': user_id, 'username': current_user.username},
+            to=f'user_{owner_id}'
         )
 
     return jsonify({'success': True})

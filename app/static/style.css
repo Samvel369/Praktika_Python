@@ -125,3 +125,21 @@ h2 {
     flex-direction: column;
     gap: 5px;
 }
+
+.notification-container {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 9999;
+}
+.notification {
+    margin-bottom: 10px;
+    padding: 10px 15px;
+    border-radius: 5px;
+    color: #fff;
+    font-size: 14px;
+    opacity: 0.9;
+}
+.notification.success { background-color: #4caf50; }
+.notification.error { background-color: #f44336; }
+.notification.info { background-color: #2196f3; }
